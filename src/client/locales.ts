@@ -48,6 +48,28 @@ export type WorkspaceGroupsKey =
   | 'group.deleteCancel'
   | 'group.nameDuplicate'
   | 'group.nameReserved'
+  | 'group.pin'
+  | 'group.unpin'
+  | 'group.pinned'
+  | 'group.appearance'
+  | 'group.appearanceTitle'
+  | 'group.appearanceDone'
+  | 'group.color'
+  | 'group.colorDefault'
+  | 'group.icon'
+  | 'group.iconDefault'
+  | 'group.iconCustom'
+  | 'group.iconInvalid'
+  | 'color.red'
+  | 'color.orange'
+  | 'color.amber'
+  | 'color.green'
+  | 'color.teal'
+  | 'color.blue'
+  | 'color.indigo'
+  | 'color.purple'
+  | 'color.pink'
+  | 'color.gray'
   | 'section.topLevel'
   | 'manual.saveError'
   | 'session.new'
@@ -85,6 +107,15 @@ export type WorkspaceGroupsKey =
   | 'tabs.aria'
   | 'tabs.close'
   | 'tabs.archive'
+  | 'tabs.pin'
+  | 'tabs.unpin'
+  | 'tabs.pinned'
+  | 'tabs.rename'
+  | 'tabs.renameSession'
+  | 'tabs.renamePlaceholder'
+  | 'tabs.closeOthers'
+  | 'tabs.closeRight'
+  | 'tabs.dragHint'
 
 export type WorkspaceGroupsDict = LocaleDictOf<'workspaceGroups'>
 
@@ -132,6 +163,28 @@ export const zh: WorkspaceGroupsDict = {
   'group.deleteCancel': '取消删除',
   'group.nameDuplicate': '已存在同名分组',
   'group.nameReserved': '该名称不可用',
+  'group.pin': '置顶分组',
+  'group.unpin': '取消置顶',
+  'group.pinned': '已置顶',
+  'group.appearance': '颜色与图标…',
+  'group.appearanceTitle': '分组外观',
+  'group.appearanceDone': '完成',
+  'group.color': '颜色',
+  'group.colorDefault': '默认',
+  'group.icon': '图标',
+  'group.iconDefault': '默认图标',
+  'group.iconCustom': '自定义字符',
+  'group.iconInvalid': '图标需为预设图标或 1–4 个字符',
+  'color.red': '红色',
+  'color.orange': '橙色',
+  'color.amber': '琥珀',
+  'color.green': '绿色',
+  'color.teal': '青色',
+  'color.blue': '蓝色',
+  'color.indigo': '靛蓝',
+  'color.purple': '紫色',
+  'color.pink': '粉色',
+  'color.gray': '灰色',
   'section.topLevel': '顶层项目',
   'manual.saveError': '分组变更保存失败',
   'session.new': '新建会话',
@@ -169,6 +222,15 @@ export const zh: WorkspaceGroupsDict = {
   'tabs.aria': '已打开的会话',
   'tabs.close': '关闭标签',
   'tabs.archive': '归档',
+  'tabs.pin': '固定标签',
+  'tabs.unpin': '取消固定',
+  'tabs.pinned': '已固定（关闭其他时保留）',
+  'tabs.rename': '重命名标签',
+  'tabs.renameSession': '重命名会话…',
+  'tabs.renamePlaceholder': '标签名，留空恢复会话标题',
+  'tabs.closeOthers': '关闭其他标签',
+  'tabs.closeRight': '关闭右侧标签',
+  'tabs.dragHint': '拖动可排序',
 }
 
 /** English dictionary. */
@@ -215,6 +277,28 @@ export const en: WorkspaceGroupsDict = {
   'group.deleteCancel': 'Cancel delete',
   'group.nameDuplicate': 'A group with this name already exists',
   'group.nameReserved': 'This name is not available',
+  'group.pin': 'Pin group',
+  'group.unpin': 'Unpin group',
+  'group.pinned': 'Pinned',
+  'group.appearance': 'Color & icon…',
+  'group.appearanceTitle': 'Group appearance',
+  'group.appearanceDone': 'Done',
+  'group.color': 'Color',
+  'group.colorDefault': 'Default',
+  'group.icon': 'Icon',
+  'group.iconDefault': 'Default icon',
+  'group.iconCustom': 'Custom character',
+  'group.iconInvalid': 'Use a preset icon or 1–4 characters',
+  'color.red': 'Red',
+  'color.orange': 'Orange',
+  'color.amber': 'Amber',
+  'color.green': 'Green',
+  'color.teal': 'Teal',
+  'color.blue': 'Blue',
+  'color.indigo': 'Indigo',
+  'color.purple': 'Purple',
+  'color.pink': 'Pink',
+  'color.gray': 'Gray',
   'section.topLevel': 'Top-level projects',
   'manual.saveError': 'Could not save group changes',
   'session.new': 'New Session',
@@ -252,4 +336,13 @@ export const en: WorkspaceGroupsDict = {
   'tabs.aria': 'Open sessions',
   'tabs.close': 'Close tab',
   'tabs.archive': 'Archive',
+  'tabs.pin': 'Pin tab',
+  'tabs.unpin': 'Unpin tab',
+  'tabs.pinned': 'Pinned (kept by Close others)',
+  'tabs.rename': 'Rename tab',
+  'tabs.renameSession': 'Rename session…',
+  'tabs.renamePlaceholder': 'Tab name — blank restores the session title',
+  'tabs.closeOthers': 'Close other tabs',
+  'tabs.closeRight': 'Close tabs to the right',
+  'tabs.dragHint': 'Drag to reorder',
 }

@@ -8,22 +8,45 @@
  * workspace rows, standing for their containing category) are drop targets.
  * The payload is a custom dataTransfer type so only in-plugin drags land.
  */
-import { useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type AnimationEvent, type DragEvent, type ReactNode } from 'react'
 import {
+  IconApiOutlineMedium,
   IconArchiveOutlineRegular,
+  IconArchiveOutlineMedium,
+  IconBranchOutlineMedium,
   IconBranchOutlineRegular,
+  IconChecklistOutlineMedium,
+  IconClockOutlineMedium,
+  IconCodeOutlineMedium,
+  IconCordisPluginOutlineMedium,
+  IconDataOutlineMedium,
+  IconDatabaseOutlineMedium,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
   IconFolderCloseMedium,
   IconFolderOpenMedium,
   IconFolderOpenOutlineRegular,
+  IconGlobeOutlineMedium,
+  IconGoalOutlineMedium,
+  IconLightOutlineMedium,
+  IconPinFillMedium,
+  IconPinOutlineRegular,
+  IconPlanOutlineMedium,
   IconPlusOutlineRegular,
   IconProjectAddOutlineRegular,
   IconRightUpOutlineRegular,
+  IconShieldOutlineMedium,
+  IconSkillOutlineMedium,
+  IconSlidersTwoOutlineRegular,
+  IconSparkleMedium,
+  IconTreeCornerMedium,
   IconTriangleRightFillMedium,
   IconTrashOutlineRegular,
+  IconUsersOutlineMedium,
+  IconWorkspaceTreeOutlineMedium,
   Menu,
   StateDot,
+  type MenuEntry,
   type StateDotState,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
@@ -91,30 +114,100 @@ export interface RowDropProps {
 }
 
 /**
+ * Preset group icon ids → primitives artwork. Medium stroke to match the
+ * folder glyph used by unprefixed groups. Keyed by plain string so an id from
+ * a newer host (or a hand-edited JSON file) degrades instead of throwing.
+ */
+const CATEGORY_ICONS: Record<string, ReactNode> = {
+  folder: <IconFolderCloseMedium />,
+  workspace: <IconWorkspaceTreeOutlineMedium />,
+  code: <IconCodeOutlineMedium />,
+  plugin: <IconCordisPluginOutlineMedium />,
+  skill: <IconSkillOutlineMedium />,
+  data: <IconDataOutlineMedium />,
+  database: <IconDatabaseOutlineMedium />,
+  api: <IconApiOutlineMedium />,
+  plan: <IconPlanOutlineMedium />,
+  goal: <IconGoalOutlineMedium />,
+  light: <IconLightOutlineMedium />,
+  globe: <IconGlobeOutlineMedium />,
+  archive: <IconArchiveOutlineMedium />,
+  branch: <IconBranchOutlineMedium />,
+  users: <IconUsersOutlineMedium />,
+  clock: <IconClockOutlineMedium />,
+  shield: <IconShieldOutlineMedium />,
+  checklist: <IconChecklistOutlineMedium />,
+  sparkle: <IconSparkleMedium />,
+  tree: <IconTreeCornerMedium />,
+}
+
+/**
+ * Resolve a stored `appearance.icon` value: a preset id renders the artwork,
+ * a 1–4 character glyph renders as text, and anything else returns null so the
+ * caller keeps the default folder icon.
+ */
+function resolveCategoryIcon(icon: string | undefined): ReactNode | null {
+  if (icon === undefined || icon === '') return null
+  const preset = CATEGORY_ICONS[icon]
+  if (preset !== undefined) return preset
+  return Array.from(icon).length <= 4 ? <span className="wgCategoryGlyph">{icon}</span> : null
+}
+
+/**
+ * Render one stored icon value (preset artwork or a short glyph). Shared by the
+ * category row's icon slot and the appearance picker grid, so both show exactly
+ * the same artwork. `fallback` renders when the value is empty or unknown.
+ */
+export function CategoryGlyph({ icon, fallback = null }: { icon: string | undefined; fallback?: ReactNode }): JSX.Element {
+  return <>{resolveCategoryIcon(icon) ?? fallback}</>
+}
+
+/**
  * One category folder row: toggle, rename/delete menu (every group — rule
  * groups via overlay renames/hides), draggable source for group reorder and
  * drop target for both workspace moves and group reorders.
  */
-export function CategoryRow({ node, t, onToggle, onRename, onDelete, dropActive = false, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartCategory }: {
+export function CategoryRow({ node, t, onToggle, onRename, onDelete, onTogglePin, onEditAppearance, dropActive = false, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartCategory }: {
   node: CategoryNode
   t: T
   onToggle: () => void
   /** Rename/delete actions; the hover menu renders only when both provided. */
   onRename?: () => void
   onDelete?: () => void
+  /** Pin/unpin this group (menu row). */
+  onTogglePin?: () => void
+  /** Open the appearance dialog (menu row). */
+  onEditAppearance?: () => void
   /** Group reorder source; the row becomes draggable only when provided. */
   onDragStartCategory?: (event: DragEvent) => void
 } & RowDropProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const count = node.workspaces.length
   const manageable = onRename !== undefined && onDelete !== undefined
+  const pinned = node.appearance?.pinned === true
+  const menuItems: MenuEntry[] = [
+    ...(onTogglePin === undefined
+      ? []
+      : [{
+        id: 'pin',
+        label: pinned ? t('group.unpin') : t('group.pin'),
+        icon: pinned ? <IconPinFillMedium /> : <IconPinOutlineRegular />,
+      }]),
+    ...(onEditAppearance === undefined
+      ? []
+      : [{ id: 'appearance', label: t('group.appearance'), icon: <IconSlidersTwoOutlineRegular /> }]),
+    { type: 'separator', id: 'group-menu-separator' },
+    { id: 'rename', label: t('group.rename'), icon: <IconEditOutlineRegular /> },
+    { id: 'delete', label: t('group.delete'), icon: <IconTrashOutlineRegular />, danger: true },
+  ]
   return (
     <div
       className={`wgCategoryRow${dropActive ? ' wgDropTarget' : ''}${insertLine === 'before' ? ' wgInsertBefore' : insertLine === 'after' ? ' wgInsertAfter' : ''}`}
       role="treeitem"
       aria-expanded={node.expanded}
-      aria-label={t('section.workspaces')}
+      aria-label={pinned ? `${t('section.workspaces')} · ${t('group.pinned')}` : t('section.workspaces')}
       data-wg-category={node.key}
+      data-wg-color={node.appearance?.color}
       /* Flower-branch hooks: a category row starts a group, so the stem kinks
          here. Deliberately NOT marked active even when it contains the open
          session — the session row below it carries that marker, and only one
@@ -132,21 +225,28 @@ export function CategoryRow({ node, t, onToggle, onRename, onDelete, dropActive 
         <IconTriangleRightFillMedium />
       </span>
       <span className="wgCategoryIcon" data-wg-row-icon="group">
-        {node.expanded ? <IconFolderOpenMedium /> : <IconFolderCloseMedium />}
+        <CategoryGlyph
+          icon={node.appearance?.icon}
+          fallback={node.expanded ? <IconFolderOpenMedium /> : <IconFolderCloseMedium />}
+        />
       </span>
       <span className="wgCategoryLabel">{node.label}</span>
       <span className="wgCategoryCount">{count}</span>
+      {pinned && (
+        <span className="wgCategoryPin" aria-hidden>
+          <IconPinFillMedium />
+        </span>
+      )}
       {manageable && (
         <span className="wgRowActions">
           <Menu
             open={menuOpen}
             onClose={() => { setMenuOpen(false) }}
-            items={[
-              { id: 'rename', label: t('group.rename'), icon: <IconEditOutlineRegular /> },
-              { id: 'delete', label: t('group.delete'), icon: <IconTrashOutlineRegular />, danger: true },
-            ]}
+            items={menuItems}
             onSelect={(id) => {
               setMenuOpen(false)
+              if (id === 'pin') onTogglePin?.()
+              if (id === 'appearance') onEditAppearance?.()
               if (id === 'rename') onRename()
               if (id === 'delete') onDelete()
             }}
@@ -291,6 +391,86 @@ export function TreeChildren({ children }: { children: ReactNode }) {
   return (
     <div className="wgTreeChildren" role="group">
       {children}
+    </div>
+  )
+}
+
+/** Keyframe names the disclosure animation relies on (styles.css). */
+const ROW_GROUP_OPEN_ANIMATION = 'wg-rows-in'
+const ROW_GROUP_CLOSE_ANIMATION = 'wg-rows-out'
+
+/** Upper bound for one disclosure animation (180ms open / 160ms close). */
+const ROW_GROUP_ANIMATION_FALLBACK_MS = 400
+
+/** Lifecycle of one animated disclosure body. */
+type RowGroupPhase = 'opening' | 'open' | 'closing' | 'closed'
+
+/** Whether the user asked the OS to reduce motion (no sync unmount without it). */
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+/**
+ * Animated disclosure body shared by the category and project levels.
+ *
+ * Collapsed state renders nothing at all (same DOM as the old
+ * `{expanded && …}`), so hidden subtrees cost no layout. Expanding plays a
+ * 0fr→1fr grid animation; collapsing keeps the rows mounted for one closing
+ * animation and unmounts on its `animationend`. `prefers-reduced-motion`
+ * unmounts synchronously instead — waiting for an `animationend` that CSS
+ * disabled would leave the group stuck half-closed.
+ *
+ * The flower-branch overlay cannot follow a moving row box, so the animation
+ * phase exposes `data-wg-animating` (styles.css fades the vine while it is
+ * present).
+ */
+export function RowGroup({ expanded, className, animate = true, children }: {
+  expanded: boolean
+  className?: string
+  /** Disable the animation for huge subtrees or during drag folding. */
+  animate?: boolean
+  children: ReactNode
+}): JSX.Element | null {
+  const [phase, setPhase] = useState<RowGroupPhase>(expanded ? 'open' : 'closed')
+  const previousExpanded = useRef(expanded)
+  // Adjust state while rendering (React's documented prop-change pattern) so a
+  // reduced-motion collapse unmounts in the same commit instead of flashing
+  // the old rows for a frame.
+  if (previousExpanded.current !== expanded) {
+    previousExpanded.current = expanded
+    if (expanded) setPhase(animate && !prefersReducedMotion() ? 'opening' : 'open')
+    else setPhase(animate && !prefersReducedMotion() ? 'closing' : 'closed')
+  }
+  // Insurance against a missing `animationend` (interrupted or skipped
+  // animation): the animating phase holds `pointer-events:none` and keeps a
+  // collapsed body mounted, so it must always settle on its own.
+  useEffect(() => {
+    if (phase !== 'opening' && phase !== 'closing') return undefined
+    const timer = window.setTimeout(() => {
+      setPhase(phase === 'opening' ? 'open' : 'closed')
+    }, ROW_GROUP_ANIMATION_FALLBACK_MS)
+    return () => { window.clearTimeout(timer) }
+  }, [phase])
+  if (phase === 'closed') return null
+  const animating = phase === 'opening' || phase === 'closing'
+  const classes = `wgRows${className === undefined ? '' : ` ${className}`}${phase === 'opening' ? ' wgRowsOpening' : ''}${phase === 'closing' ? ' wgRowsClosing' : ''}`
+  const onAnimationEnd = (event: AnimationEvent<HTMLDivElement>): void => {
+    if (event.target !== event.currentTarget) return
+    if (phase === 'opening' && event.animationName === ROW_GROUP_OPEN_ANIMATION) setPhase('open')
+    if (phase === 'closing' && event.animationName === ROW_GROUP_CLOSE_ANIMATION) setPhase('closed')
+  }
+  return (
+    <div
+      role="group"
+      className={classes}
+      aria-hidden={!expanded}
+      {...(animating ? { 'data-wg-animating': '' } : {})}
+      style={animating ? { pointerEvents: 'none' } : undefined}
+      onAnimationEnd={onAnimationEnd}
+    >
+      <div className="wgRowsInner">{children}</div>
     </div>
   )
 }

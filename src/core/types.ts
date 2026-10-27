@@ -24,6 +24,47 @@ export interface GroupCategory {
   rules: GroupRule[]
 }
 
+/** Theme-safe palette id for a group's accent. */
+export type GroupColor =
+  | 'red' | 'orange' | 'amber' | 'green' | 'teal'
+  | 'blue' | 'indigo' | 'purple' | 'pink' | 'gray'
+
+/** Whitelist shared by the host write-validation and the client picker. */
+export const GROUP_COLORS: readonly GroupColor[] = [
+  'red', 'orange', 'amber', 'green', 'teal',
+  'blue', 'indigo', 'purple', 'pink', 'gray',
+]
+
+/** Curated icon ids (rendered from @deepseek-ai/dsh-client-ui-primitives). */
+export type GroupIconId =
+  | 'folder' | 'workspace' | 'code' | 'plugin' | 'skill' | 'data'
+  | 'database' | 'api' | 'plan' | 'goal' | 'light' | 'globe'
+  | 'archive' | 'branch' | 'users' | 'clock' | 'shield' | 'checklist'
+  | 'sparkle' | 'tree'
+
+export const GROUP_ICON_IDS: readonly GroupIconId[] = [
+  'folder', 'workspace', 'code', 'plugin', 'skill', 'data',
+  'database', 'api', 'plan', 'goal', 'light', 'globe',
+  'archive', 'branch', 'users', 'clock', 'shield', 'checklist',
+  'sparkle', 'tree',
+]
+
+/**
+ * Presentation metadata for one group. Every field optional.
+ *
+ * The explicit `| undefined` on each field is what lets a UI patch clear a
+ * value (`pruneAppearance` then drops it): under `exactOptionalPropertyTypes`
+ * a bare `color?: GroupColor` would reject `{ color: undefined }`.
+ */
+export interface CategoryAppearance {
+  /** Palette id; the CSS palette lives in styles.css `[data-wg-color]`. */
+  color?: GroupColor | undefined
+  /** `GroupIconId` preset id, or a short glyph (1–4 code units, emoji/latin). */
+  icon?: string | undefined
+  /** Pinned groups sort before unpinned ones (within the manual order). */
+  pinned?: boolean | undefined
+}
+
 /** The full sidecar configuration (mirrors workspace-groups.yaml). */
 export interface GroupsConfig {
   /** Category folders, in render order. First match wins. */
@@ -45,7 +86,9 @@ export interface GroupsConfig {
  *
  * All new fields are optional for backward compatibility (files written by
  * older plugin versions keep working); rendering falls back to sensible
- * defaults when they are absent.
+ * defaults when they are absent. Note that an older plugin version writes the
+ * whole file back, which silently drops fields it does not know about — e.g.
+ * `appearance` (group color / icon / pin) is lost after a downgrade.
  */
 export interface ManualGroups {
   /**
@@ -84,6 +127,13 @@ export interface ManualGroups {
    * inert: workspaces matching them become top-level (ungrouped).
    */
   hidden?: string[]
+  /**
+   * Per-group presentation, keyed by category DISPLAY name (same key space as
+   * `categoryOrder`). Optional per field; an absent group has no presentation.
+   * Dangling keys (a YAML category that no longer exists) are tolerated on read
+   * and on write — see validateManualGroups.
+   */
+  appearance?: Record<string, CategoryAppearance>
 }
 
 /**

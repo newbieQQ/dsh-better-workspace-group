@@ -31,12 +31,26 @@ export interface PersistedTab {
   readonly sessionId: string
   /** Arrival key (React list identity). */
   readonly order: number
+  /** Pinned tabs are restored at the front of the strip. */
+  readonly pinned?: boolean
+  /** A label the user typed for the tab itself (absent = follow the session). */
+  readonly title?: string
 }
 
 /** The persisted document. */
 export interface TabsDocument {
-  /** Shape version; a mismatch discards the file rather than guessing. */
-  readonly version: 1
+  /**
+   * Shape version.
+   *
+   * 1 = `{sessionId, order}` only (what the shipped build writes); 2 adds the
+   * optional `pinned` / `title` per tab. A version-1 file is READ as version 2
+   * with every tab unpinned and untitled — that is exactly what it meant — and
+   * the next write upgrades it. The two shapes are field-compatible, so no
+   * conversion step exists: an older build reading a version-2 file would drop
+   * the extra flags and keep working, which is why this stayed a tolerance
+   * instead of a hard rejection.
+   */
+  readonly version: 2
   /** Arrival counter, kept ahead of every tab's own order. */
   readonly order: number
   readonly tabs: readonly PersistedTab[]
@@ -48,6 +62,28 @@ export function defaultTabsPath(): string {
     ? process.env.DSH_HOME
     : resolve(homedir(), '.dsh')
   return resolve(home, 'workspace-groups.tabs.json')
+}
+
+/**
+ * Normalize one tab row (used by both the file reader and the PUT body check, so
+ * the two can never drift).
+ *
+ * @param entry - one element of a stored/`posted` `tabs` array.
+ * @returns the tab, or null when the row is unusable.
+ */
+export function parsePersistedTab(entry: unknown): PersistedTab | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const row = entry as Record<string, unknown>
+  if (typeof row.sessionId !== 'string' || row.sessionId === '') return null
+  if (typeof row.order !== 'number' || !Number.isFinite(row.order)) return null
+  const pinned = row.pinned === true
+  const title = typeof row.title === 'string' && row.title.trim() !== '' ? row.title.trim() : undefined
+  return {
+    sessionId: row.sessionId,
+    order: row.order,
+    ...(pinned ? { pinned: true } : {}),
+    ...(title !== undefined ? { title } : {}),
+  }
 }
 
 /**
@@ -64,22 +100,22 @@ export function defaultTabsPath(): string {
 export function parseTabsDocument(raw: unknown): TabsDocument | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
   const source = raw as Record<string, unknown>
-  if (source.version !== 1) return null
+  // 1 and 2 are field-compatible; anything else is a shape this build cannot
+  // reason about and is discarded rather than guessed at.
+  if (source.version !== 1 && source.version !== 2) return null
   if (typeof source.order !== 'number' || !Number.isFinite(source.order)) return null
   if (!Array.isArray(source.tabs)) return null
   const tabs: PersistedTab[] = []
   const seen = new Set<string>()
   for (const entry of source.tabs) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const row = entry as Record<string, unknown>
-    if (typeof row.sessionId !== 'string' || row.sessionId === '') continue
-    if (typeof row.order !== 'number' || !Number.isFinite(row.order)) continue
-    if (seen.has(row.sessionId)) continue
-    seen.add(row.sessionId)
-    tabs.push({ sessionId: row.sessionId, order: row.order })
+    const tab = parsePersistedTab(entry)
+    if (tab === null) continue
+    if (seen.has(tab.sessionId)) continue
+    seen.add(tab.sessionId)
+    tabs.push(tab)
   }
   return {
-    version: 1,
+    version: 2,
     order: source.order,
     tabs,
   }
@@ -141,7 +177,7 @@ export async function writeTabsDocument(path: string, document: TabsDocument): P
 export function documentForTabs(state: { order: number; tabs: readonly PersistedTab[] }): TabsDocument {
   const highest = state.tabs.reduce((max, tab) => Math.max(max, tab.order), 0)
   return {
-    version: 1,
+    version: 2,
     order: Math.max(state.order, highest),
     tabs: [...state.tabs],
   }

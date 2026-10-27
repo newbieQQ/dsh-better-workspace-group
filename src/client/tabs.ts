@@ -2,12 +2,19 @@
  * Pure session-tab state: the ordered strip of sessions the user has opened,
  * the active one, and each tab's derived presentation.
  *
- * Position model: a tab's place in the strip is decided ONCE, when it is first
- * opened, and never changes afterwards. Switching to a tab, or re-opening a
- * session that already has one, leaves the strip exactly as it was — so clicking
- * a chip never moves the chip out from under the pointer. Only two events change
- * the order: a session opening for the FIRST time (append) and a tab closing
- * (remove).
+ * Position model: a tab's place in the strip is decided when it is first opened
+ * and otherwise only moves when the USER moves it. Switching to a tab, or
+ * re-opening a session that already has one, leaves the strip exactly as it was
+ * — so clicking a chip never moves the chip out from under the pointer. The
+ * order changes on: a session opening for the FIRST time (append), a tab closing
+ * (remove), a drag (move), and a pin toggle (which carries the chip across the
+ * pinned boundary).
+ *
+ * The array IS the display order, with one invariant the transforms maintain:
+ * every pinned tab sits before every unpinned one. New tabs therefore append at
+ * the end (the unpinned block) and pinning/unpinning re-inserts at the boundary
+ * between the two blocks. A stored strip from an older build has no `pinned`
+ * flag, which reads as "unpinned" and satisfies the invariant as-is.
  *
  * Runtime-free on purpose (same discipline as `store-core.ts` / `quick.ts`):
  * the component owns the ref + React state, this module owns every rule, and
@@ -32,6 +39,21 @@ export interface SessionTab {
    * React move an existing chip's DOM node instead of reconciling it in place.
    */
   readonly order: number
+  /**
+   * Pinned tabs stay at the front of the strip and survive `close others`.
+   *
+   * Absent means unpinned: that is both the `false` case and the shape an older
+   * build's stored strip has, so no migration step is needed to read one back.
+   */
+  readonly pinned?: boolean
+  /**
+   * A label the user typed for THIS tab, overriding the session's title.
+   *
+   * Kept separate from the session title on purpose: renaming a tab here must
+   * not rewrite the conversation's own name (which the sidebar and the search
+   * results show). Absent/empty means "follow the session".
+   */
+  readonly title?: string
 }
 
 /** Feature switch: whether opening a session also surfaces a tab. */
@@ -76,6 +98,166 @@ export function appendTab(tabs: readonly SessionTab[], sessionId: SessionId, nex
  */
 export function removeTab(tabs: readonly SessionTab[], sessionId: SessionId): SessionTab[] {
   return tabs.filter(tab => tab.sessionId !== sessionId)
+}
+
+/**
+ * Whether a tab is pinned (absent counts as unpinned).
+ * @param tab - the tab.
+ * @returns true when the tab belongs in the pinned block.
+ */
+function isPinned(tab: SessionTab): boolean {
+  return tab.pinned === true
+}
+
+/**
+ * Count the leading pinned block.
+ *
+ * The transforms keep every pinned tab before every unpinned one, so the pinned
+ * block is always a prefix and its length is the single index that separates
+ * the two blocks — which is exactly where a chip lands when it changes sides.
+ *
+ * @param tabs - strip in display order.
+ * @returns how many leading tabs are pinned.
+ */
+export function pinnedCount(tabs: readonly SessionTab[]): number {
+  let count = 0
+  while (count < tabs.length && isPinned(tabs[count] as SessionTab)) count += 1
+  return count
+}
+
+/**
+ * Stable-partition a strip so every pinned tab precedes every unpinned one.
+ *
+ * Needed by the restore path: stored tabs are merged onto whatever the startup
+ * flow already opened, and an append would otherwise park a pinned tab at the
+ * end of the strip. Already-normalized strips come back as a copy.
+ *
+ * @param tabs - any strip.
+ * @returns a strip satisfying the pinned-first invariant.
+ */
+export function normalizeTabs(tabs: readonly SessionTab[]): SessionTab[] {
+  const pinned = tabs.filter(isPinned)
+  if (pinned.length === 0 || pinned.length === tabs.length) return [...tabs]
+  return [...pinned, ...tabs.filter(tab => !isPinned(tab))]
+}
+
+/**
+ * Move one tab to a new place in the strip (drag and drop).
+ *
+ * `targetIndex` is an index in the RESULTING strip. The move is clamped to the
+ * tab's own block — a dragged chip can be reordered within the pinned block or
+ * within the unpinned one, but never carried across that boundary. Crossing it
+ * is `togglePinTab`'s job, because it changes the tab's meaning rather than
+ * just its position: pinning is what makes a tab survive `close others`.
+ *
+ * @param tabs - strip in display order.
+ * @param sessionId - the tab being moved.
+ * @param targetIndex - desired index in the resulting strip.
+ * @returns a new strip, or the same array when nothing moved.
+ */
+export function moveTab(
+  tabs: readonly SessionTab[],
+  sessionId: SessionId,
+  targetIndex: number,
+): SessionTab[] {
+  const from = tabs.findIndex(tab => tab.sessionId === sessionId)
+  if (from < 0) return tabs as SessionTab[]
+  const moving = tabs[from] as SessionTab
+  const rest = tabs.filter(tab => tab.sessionId !== sessionId)
+  const boundary = pinnedCount(rest)
+  const min = isPinned(moving) ? 0 : boundary
+  const max = isPinned(moving) ? boundary : rest.length
+  const clamped = Math.min(Math.max(Math.trunc(targetIndex), min), max)
+  if (clamped === from) return tabs as SessionTab[]
+  return [...rest.slice(0, clamped), moving, ...rest.slice(clamped)]
+}
+
+/**
+ * Pin or unpin one tab, re-inserting it at the boundary between the blocks.
+ *
+ * Pinning puts the chip at the END of the pinned block (next to the other
+ * kept tabs) and unpinning at the START of the unpinned one, so a toggle never
+ * throws a chip to the far end of the strip.
+ *
+ * @param tabs - strip in display order.
+ * @param sessionId - the tab to toggle.
+ * @returns a new strip, or the same array when the tab is absent.
+ */
+export function togglePinTab(tabs: readonly SessionTab[], sessionId: SessionId): SessionTab[] {
+  const from = tabs.findIndex(tab => tab.sessionId === sessionId)
+  if (from < 0) return tabs as SessionTab[]
+  const moving = tabs[from] as SessionTab
+  const rest = tabs.filter(tab => tab.sessionId !== sessionId)
+  const boundary = pinnedCount(rest)
+  const repinned: SessionTab = isPinned(moving)
+    ? { sessionId: moving.sessionId, order: moving.order, ...(moving.title !== undefined ? { title: moving.title } : {}) }
+    : { sessionId: moving.sessionId, order: moving.order, pinned: true, ...(moving.title !== undefined ? { title: moving.title } : {}) }
+  return [...rest.slice(0, boundary), repinned, ...rest.slice(boundary)]
+}
+
+/**
+ * Set or clear one tab's own label.
+ *
+ * A blank value CLEARS the override (the chip falls back to the session title)
+ * rather than storing an empty label, so "rename to nothing" and "rename back to
+ * the session title" are the same gesture.
+ *
+ * @param tabs - strip.
+ * @param sessionId - the tab to relabel.
+ * @param title - the new label; blank clears it.
+ * @returns a new strip, or the same array when the tab is absent.
+ */
+export function renameTab(
+  tabs: readonly SessionTab[],
+  sessionId: SessionId,
+  title: string | undefined,
+): SessionTab[] {
+  const from = tabs.findIndex(tab => tab.sessionId === sessionId)
+  if (from < 0) return tabs as SessionTab[]
+  const trimmed = title?.trim() ?? ''
+  // No change: return the same array so the store can skip the write.
+  if ((tabs[from]?.title ?? '') === trimmed) return tabs as SessionTab[]
+  return tabs.map((tab) => {
+    if (tab.sessionId !== sessionId) return tab
+    if (trimmed === '') {
+      const { title: _cleared, ...rest } = tab
+      void _cleared
+      return rest
+    }
+    return { ...tab, title: trimmed }
+  })
+}
+
+/**
+ * Close every tab except one — pinned tabs stay.
+ *
+ * Pinning is exactly how a user says "keep this no matter what"; letting
+ * `close others` eat the pinned block would make the flag pointless.
+ *
+ * @param tabs - strip.
+ * @param keepSessionId - the tab to keep (plus every pinned one).
+ * @returns a new strip.
+ */
+export function closeOtherTabs(tabs: readonly SessionTab[], keepSessionId: SessionId): SessionTab[] {
+  if (!tabs.some(tab => tab.sessionId === keepSessionId)) return tabs as SessionTab[]
+  return tabs.filter(tab => isPinned(tab) || tab.sessionId === keepSessionId)
+}
+
+/**
+ * Close every tab after one in display order.
+ *
+ * "After" is display order (pinned block first), which is the order the user
+ * sees; a pinned tab is never after an unpinned one, so this cannot silently
+ * drop the kept block.
+ *
+ * @param tabs - strip in display order.
+ * @param sessionId - the last tab that stays.
+ * @returns a new strip, or the same array when the tab is absent.
+ */
+export function closeTabsAfter(tabs: readonly SessionTab[], sessionId: SessionId): SessionTab[] {
+  const from = tabs.findIndex(tab => tab.sessionId === sessionId)
+  if (from < 0) return tabs as SessionTab[]
+  return tabs.slice(0, from + 1)
 }
 
 /**
@@ -332,8 +514,78 @@ export function restoreTabsImpl(state: SessionTabsState, tabs: readonly SessionT
     // Re-key onto a fresh, monotonically increasing counter so a restored key
     // can never collide with one already spent.
     order += 1
-    additions.push({ sessionId: tab.sessionId, order })
+    // Carry the chip's own presentation across the restore: a pinned tab or a
+    // custom label that came back unpinned/untitled would silently lose the
+    // user's configuration on every restart.
+    additions.push({
+      sessionId: tab.sessionId,
+      order,
+      ...(tab.pinned === true ? { pinned: true } : {}),
+      ...(tab.title !== undefined ? { title: tab.title } : {}),
+    })
   }
-  if (additions.length > 0) state.tabs = [...state.tabs, ...additions]
+  if (additions.length > 0) {
+    const merged = [...state.tabs, ...additions]
+    // Restored tabs can be pinned, and appending them would park a pinned chip
+    // past the unpinned ones. Re-establish the pinned-first invariant.
+    state.tabs = merged.some(isPinned) ? normalizeTabs(merged) : merged
+  }
   state.order = order
+}
+
+/**
+ * Store transform: pin or unpin one tab.
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the tab to toggle.
+ */
+export function pinTabImpl(state: SessionTabsState, sessionId: SessionId): void {
+  const next = togglePinTab(state.tabs, sessionId)
+  if (next === state.tabs) return
+  state.tabs = next
+}
+
+/**
+ * Store transform: move one tab to a new index (drag and drop).
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the tab being moved.
+ * @param targetIndex - desired index in the resulting strip.
+ */
+export function moveTabImpl(state: SessionTabsState, sessionId: SessionId, targetIndex: number): void {
+  const next = moveTab(state.tabs, sessionId, targetIndex)
+  if (next === state.tabs) return
+  state.tabs = next
+}
+
+/**
+ * Store transform: set or clear one tab's own label.
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the tab to relabel.
+ * @param title - the new label; blank clears it.
+ */
+export function renameTabImpl(state: SessionTabsState, sessionId: SessionId, title: string | undefined): void {
+  const next = renameTab(state.tabs, sessionId, title)
+  if (next === state.tabs) return
+  state.tabs = next
+}
+
+/**
+ * Store transform: close every unlisted tab, keeping the pinned ones.
+ * @param state - store draft, mutated in place.
+ * @param keepSessionId - the tab to keep.
+ */
+export function closeOthersImpl(state: SessionTabsState, keepSessionId: SessionId): void {
+  const next = closeOtherTabs(state.tabs, keepSessionId)
+  if (next.length === state.tabs.length) return
+  state.tabs = next
+}
+
+/**
+ * Store transform: close every tab after one in display order.
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the last tab that stays.
+ */
+export function closeAfterImpl(state: SessionTabsState, sessionId: SessionId): void {
+  const next = closeTabsAfter(state.tabs, sessionId)
+  if (next.length === state.tabs.length) return
+  state.tabs = next
 }

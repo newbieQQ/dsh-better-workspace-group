@@ -2,12 +2,19 @@
  * Pure session-tab state: the ordered strip of sessions the user has opened,
  * the active one, and each tab's derived presentation.
  *
- * Position model: a tab's place in the strip is decided ONCE, when it is first
- * opened, and never changes afterwards. Switching to a tab, or re-opening a
- * session that already has one, leaves the strip exactly as it was — so clicking
- * a chip never moves the chip out from under the pointer. Only two events change
- * the order: a session opening for the FIRST time (append) and a tab closing
- * (remove).
+ * Position model: a tab's place in the strip is decided when it is first opened
+ * and otherwise only moves when the USER moves it. Switching to a tab, or
+ * re-opening a session that already has one, leaves the strip exactly as it was
+ * — so clicking a chip never moves the chip out from under the pointer. The
+ * order changes on: a session opening for the FIRST time (append), a tab closing
+ * (remove), a drag (move), and a pin toggle (which carries the chip across the
+ * pinned boundary).
+ *
+ * The array IS the display order, with one invariant the transforms maintain:
+ * every pinned tab sits before every unpinned one. New tabs therefore append at
+ * the end (the unpinned block) and pinning/unpinning re-inserts at the boundary
+ * between the two blocks. A stored strip from an older build has no `pinned`
+ * flag, which reads as "unpinned" and satisfies the invariant as-is.
  *
  * Runtime-free on purpose (same discipline as `store-core.ts` / `quick.ts`):
  * the component owns the ref + React state, this module owns every rule, and
@@ -31,6 +38,21 @@ export interface SessionTab {
      * React move an existing chip's DOM node instead of reconciling it in place.
      */
     readonly order: number;
+    /**
+     * Pinned tabs stay at the front of the strip and survive `close others`.
+     *
+     * Absent means unpinned: that is both the `false` case and the shape an older
+     * build's stored strip has, so no migration step is needed to read one back.
+     */
+    readonly pinned?: boolean;
+    /**
+     * A label the user typed for THIS tab, overriding the session's title.
+     *
+     * Kept separate from the session title on purpose: renaming a tab here must
+     * not rewrite the conversation's own name (which the sidebar and the search
+     * results show). Absent/empty means "follow the session".
+     */
+    readonly title?: string;
 }
 /** Feature switch: whether opening a session also surfaces a tab. */
 export type TabOpenMode = 'auto' | 'manual';
@@ -66,6 +88,91 @@ export declare function appendTab(tabs: readonly SessionTab[], sessionId: Sessio
  * @returns a new strip.
  */
 export declare function removeTab(tabs: readonly SessionTab[], sessionId: SessionId): SessionTab[];
+/**
+ * Count the leading pinned block.
+ *
+ * The transforms keep every pinned tab before every unpinned one, so the pinned
+ * block is always a prefix and its length is the single index that separates
+ * the two blocks — which is exactly where a chip lands when it changes sides.
+ *
+ * @param tabs - strip in display order.
+ * @returns how many leading tabs are pinned.
+ */
+export declare function pinnedCount(tabs: readonly SessionTab[]): number;
+/**
+ * Stable-partition a strip so every pinned tab precedes every unpinned one.
+ *
+ * Needed by the restore path: stored tabs are merged onto whatever the startup
+ * flow already opened, and an append would otherwise park a pinned tab at the
+ * end of the strip. Already-normalized strips come back as a copy.
+ *
+ * @param tabs - any strip.
+ * @returns a strip satisfying the pinned-first invariant.
+ */
+export declare function normalizeTabs(tabs: readonly SessionTab[]): SessionTab[];
+/**
+ * Move one tab to a new place in the strip (drag and drop).
+ *
+ * `targetIndex` is an index in the RESULTING strip. The move is clamped to the
+ * tab's own block — a dragged chip can be reordered within the pinned block or
+ * within the unpinned one, but never carried across that boundary. Crossing it
+ * is `togglePinTab`'s job, because it changes the tab's meaning rather than
+ * just its position: pinning is what makes a tab survive `close others`.
+ *
+ * @param tabs - strip in display order.
+ * @param sessionId - the tab being moved.
+ * @param targetIndex - desired index in the resulting strip.
+ * @returns a new strip, or the same array when nothing moved.
+ */
+export declare function moveTab(tabs: readonly SessionTab[], sessionId: SessionId, targetIndex: number): SessionTab[];
+/**
+ * Pin or unpin one tab, re-inserting it at the boundary between the blocks.
+ *
+ * Pinning puts the chip at the END of the pinned block (next to the other
+ * kept tabs) and unpinning at the START of the unpinned one, so a toggle never
+ * throws a chip to the far end of the strip.
+ *
+ * @param tabs - strip in display order.
+ * @param sessionId - the tab to toggle.
+ * @returns a new strip, or the same array when the tab is absent.
+ */
+export declare function togglePinTab(tabs: readonly SessionTab[], sessionId: SessionId): SessionTab[];
+/**
+ * Set or clear one tab's own label.
+ *
+ * A blank value CLEARS the override (the chip falls back to the session title)
+ * rather than storing an empty label, so "rename to nothing" and "rename back to
+ * the session title" are the same gesture.
+ *
+ * @param tabs - strip.
+ * @param sessionId - the tab to relabel.
+ * @param title - the new label; blank clears it.
+ * @returns a new strip, or the same array when the tab is absent.
+ */
+export declare function renameTab(tabs: readonly SessionTab[], sessionId: SessionId, title: string | undefined): SessionTab[];
+/**
+ * Close every tab except one — pinned tabs stay.
+ *
+ * Pinning is exactly how a user says "keep this no matter what"; letting
+ * `close others` eat the pinned block would make the flag pointless.
+ *
+ * @param tabs - strip.
+ * @param keepSessionId - the tab to keep (plus every pinned one).
+ * @returns a new strip.
+ */
+export declare function closeOtherTabs(tabs: readonly SessionTab[], keepSessionId: SessionId): SessionTab[];
+/**
+ * Close every tab after one in display order.
+ *
+ * "After" is display order (pinned block first), which is the order the user
+ * sees; a pinned tab is never after an unpinned one, so this cannot silently
+ * drop the kept block.
+ *
+ * @param tabs - strip in display order.
+ * @param sessionId - the last tab that stays.
+ * @returns a new strip, or the same array when the tab is absent.
+ */
+export declare function closeTabsAfter(tabs: readonly SessionTab[], sessionId: SessionId): SessionTab[];
 /**
  * Order the strip for display: strictly by arrival, regardless of which tab is
  * active.
@@ -225,3 +332,35 @@ export declare function closeTabImpl(state: SessionTabsState, sessionId: Session
  * @param tabs - tabs read from the host, oldest first.
  */
 export declare function restoreTabsImpl(state: SessionTabsState, tabs: readonly SessionTab[]): void;
+/**
+ * Store transform: pin or unpin one tab.
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the tab to toggle.
+ */
+export declare function pinTabImpl(state: SessionTabsState, sessionId: SessionId): void;
+/**
+ * Store transform: move one tab to a new index (drag and drop).
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the tab being moved.
+ * @param targetIndex - desired index in the resulting strip.
+ */
+export declare function moveTabImpl(state: SessionTabsState, sessionId: SessionId, targetIndex: number): void;
+/**
+ * Store transform: set or clear one tab's own label.
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the tab to relabel.
+ * @param title - the new label; blank clears it.
+ */
+export declare function renameTabImpl(state: SessionTabsState, sessionId: SessionId, title: string | undefined): void;
+/**
+ * Store transform: close every unlisted tab, keeping the pinned ones.
+ * @param state - store draft, mutated in place.
+ * @param keepSessionId - the tab to keep.
+ */
+export declare function closeOthersImpl(state: SessionTabsState, keepSessionId: SessionId): void;
+/**
+ * Store transform: close every tab after one in display order.
+ * @param state - store draft, mutated in place.
+ * @param sessionId - the last tab that stays.
+ */
+export declare function closeAfterImpl(state: SessionTabsState, sessionId: SessionId): void;

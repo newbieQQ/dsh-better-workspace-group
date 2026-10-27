@@ -16,8 +16,14 @@ import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-
 import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { indexSubagentDescendants, type SubagentDescendantSummary } from './subagent-lineage.ts'
-import { effectiveCategories, orderedWorkspaceIds, resolveCategory } from '../core/matcher.ts'
-import { TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL, type GroupsConfig, type ManualGroups } from '../core/types.ts'
+import { categoryAppearance, effectiveCategories, orderedWorkspaceIds, resolveCategory } from '../core/matcher.ts'
+import {
+  TOP_LEVEL_ORDER_KEY,
+  UNCATEGORIZED_LABEL,
+  type CategoryAppearance,
+  type GroupsConfig,
+  type ManualGroups,
+} from '../core/types.ts'
 
 /** Pending interaction kinds with dedicated Workspace-row presentation. */
 export type SessionPendingInteractionStatus = 'approval' | 'plan-review' | 'question'
@@ -99,6 +105,8 @@ export interface CategoryNode {
   containsCurrent: boolean
   /** Workspace folders in host order. */
   workspaces: readonly WorkspaceGroupNode[]
+  /** Presentation (color / icon / pin) for this category, when configured. */
+  appearance?: CategoryAppearance
 }
 
 /** Viewing state consumed by the derivation. */
@@ -249,12 +257,14 @@ export function deriveGroups(
         sessions: wsExpanded ? sessions : [],
       })
     }
+    const appearance = categoryAppearance(manual, key)
     nodes.push({
       key,
       label: key,
       expanded,
       containsCurrent,
       workspaces: workspaceNodes,
+      ...(appearance === undefined ? {} : { appearance }),
     })
   }
   return nodes
@@ -478,12 +488,14 @@ export function deriveSearchGroups(
   for (const key of effectiveCategories(config, manual).map(e => e.key)) {
     const workspaceNodes = byCategory.get(key)
     if (workspaceNodes === undefined || workspaceNodes.length === 0) continue
+    const appearance = categoryAppearance(manual, key)
     categories.push({
       key,
       label: key,
       expanded: true,
       containsCurrent: false,
       workspaces: workspaceNodes,
+      ...(appearance === undefined ? {} : { appearance }),
     })
   }
   return { categories, topLevel }

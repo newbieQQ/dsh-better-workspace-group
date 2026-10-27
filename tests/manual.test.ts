@@ -91,6 +91,69 @@ describe('parseManualGroups', () => {
   })
 })
 
+describe('appearance (host parsing)', () => {
+  it('parses a valid appearance block', () => {
+    const parsed = parseManualGroups({
+      categories: ['临时'],
+      assignments: {},
+      appearance: {
+        '临时': { color: 'blue', icon: 'code', pinned: true },
+        'DSH 插件': { color: 'red', icon: '🔥' },
+      },
+    })
+    expect(parsed.appearance).toEqual({
+      '临时': { color: 'blue', icon: 'code', pinned: true },
+      'DSH 插件': { color: 'red', icon: '🔥' },
+    })
+  })
+
+  it('an absent / empty appearance block stays absent', () => {
+    expect(parseManualGroups({}).appearance).toBeUndefined()
+    expect(parseManualGroups({ appearance: {} }).appearance).toBeUndefined()
+    expect(parseManualGroups({ appearance: { '临时': {} } }).appearance).toBeUndefined()
+  })
+
+  it('rejects a non-mapping appearance value', () => {
+    expect(() => parseManualGroups({ appearance: [] })).toThrow(/appearance must be a mapping/)
+  })
+
+  it('rejects an empty appearance key', () => {
+    expect(() => parseManualGroups({ appearance: { '  ': {} } })).toThrow(/appearance keys must be non-empty/)
+  })
+
+  it('rejects a colour outside the palette', () => {
+    expect(() => parseManualGroups({ appearance: { A: { color: 'chartreuse' } } })).toThrow(/\.color must be one of/)
+  })
+
+  it('rejects an illegal icon', () => {
+    expect(() => parseManualGroups({ appearance: { A: { icon: 'has space' } } })).toThrow(/icon/)
+    expect(() => parseManualGroups({ appearance: { A: { icon: 'a'.repeat(25) } } })).toThrow(/icon/)
+    expect(() => parseManualGroups({ appearance: { A: { icon: '' } } })).toThrow(/icon/)
+  })
+
+  it('rejects a non-boolean pinned', () => {
+    expect(() => parseManualGroups({ appearance: { A: { pinned: 'yes' } } })).toThrow(/pinned must be a boolean/)
+  })
+
+  it('drops empty entries and never persists pinned: false', () => {
+    const parsed = parseManualGroups({
+      appearance: { A: { pinned: false, color: 'teal' }, B: { color: undefined } },
+    })
+    expect(parsed.appearance).toEqual({ A: { color: 'teal' } })
+  })
+})
+
+describe('appearance (write boundary tolerance)', () => {
+  it('does not reject a dangling appearance key', () => {
+    const manual: ManualGroups = {
+      categories: [],
+      assignments: {},
+      appearance: { '幽灵分组': { color: 'blue', pinned: true } },
+    }
+    expect(() => validateManualGroups(manual, RULE_NAMES)).not.toThrow()
+  })
+})
+
 describe('validateManualGroups v2 (write boundary)', () => {
   it('accepts null assignments and renamed-display targets', () => {
     const manual: ManualGroups = {

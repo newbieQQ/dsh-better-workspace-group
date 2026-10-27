@@ -32,16 +32,28 @@ import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import {
   displayCategoryKeys,
+  isCategoryPinned,
   moveAfter,
   moveBefore,
   originalRuleNameForDisplay,
+  pruneAppearance,
   resolveCategory,
   takenCategoryNames,
 } from '../core/matcher.ts'
-import { TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL, type GroupsConfig, type ManualGroups } from '../core/types.ts'
+import {
+  GROUP_COLORS,
+  GROUP_ICON_IDS,
+  TOP_LEVEL_ORDER_KEY,
+  UNCATEGORIZED_LABEL,
+  type CategoryAppearance,
+  type GroupColor,
+  type GroupsConfig,
+  type ManualGroups,
+} from '../core/types.ts'
 import type { GroupsBrowserProps } from './contract.ts'
 import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, UNCATEGORIZED_KEY, type CategoryNode, type WorkspaceGroupNode } from './tree.ts'
-import { CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, hasPluginDragType, SessionRow, TreeChildren, WorkspaceRow } from './rows.tsx'
+import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
+import type { WorkspaceGroupsKey } from './locales.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
@@ -55,7 +67,7 @@ const SEARCH_QUERY_MAX_CODE_UNITS = 500
 type NormalizedManual = Required<ManualGroups>
 
 const EMPTY_MANUAL: NormalizedManual = {
-  categories: [], assignments: {}, categoryOrder: [], workspaceOrder: {}, renamed: {}, hidden: [],
+  categories: [], assignments: {}, categoryOrder: [], workspaceOrder: {}, renamed: {}, hidden: [], appearance: {},
 }
 
 /** Materialize optional overlay fields so every update is a plain object edit. */
@@ -67,7 +79,40 @@ function normalizeManual(manual: ManualGroups): NormalizedManual {
     workspaceOrder: manual.workspaceOrder ?? {},
     renamed: manual.renamed ?? {},
     hidden: manual.hidden ?? [],
+    appearance: manual.appearance ?? {},
   }
+}
+
+/**
+ * Largest subtree (rows including the level header) that still animates: a
+ * 100-session project expanding with a grid animation janks the sidebar, so
+ * wide subtrees snap open instead.
+ */
+const ANIMATION_ROW_CAP = 40
+
+/**
+ * Mirrors the host icon validator (`parseAppearance`) so invalid custom glyphs
+ * fail locally instead of turning the whole overlay PUT into a 400.
+ */
+const ICON_VALUE_PATTERN = /^(?:[a-z][a-z0-9-]{0,23}|[^\s\u0000-\u001f\u007f]{1,4})$/u
+
+/** Rows a group reveals when expanded (projects + their visible sessions). */
+function categoryRowCount(category: CategoryNode): number {
+  return category.workspaces.reduce((total, workspace) => total + 1 + (workspace.expanded ? workspace.sessions.length : 0), 0)
+}
+
+/** Palette id → i18n key for the colour picker (keeps literal key types intact). */
+const COLOR_LABEL_KEYS: Record<GroupColor, WorkspaceGroupsKey> = {
+  red: 'color.red',
+  orange: 'color.orange',
+  amber: 'color.amber',
+  green: 'color.green',
+  teal: 'color.teal',
+  blue: 'color.blue',
+  indigo: 'color.indigo',
+  purple: 'color.purple',
+  pink: 'color.pink',
+  gray: 'color.gray',
 }
 
 function sanitizeSearchQuery(value: string): string {
@@ -513,6 +558,13 @@ export function GroupsBrowser({
   const [groupDeleting, setGroupDeleting] = useState(false)
   const [groupDeleteError, setGroupDeleteError] = useState<string | null>(null)
 
+  // Appearance dialog (color / icon / pin) for one group display key. Every
+  // control applies immediately (optimistic merge + save); there is no OK, so
+  // `appearanceTarget` also doubles as the open flag.
+  const [appearanceTarget, setAppearanceTarget] = useState<string | null>(null)
+  const [appearanceDraft, setAppearanceDraft] = useState<CategoryAppearance>({})
+  const [appearanceError, setAppearanceError] = useState<string | null>(null)
+
   const takenNames = useMemo(() => takenCategoryNames(config, manual), [config, manual])
 
   const groupTrimmed = groupDraft.trim()
@@ -551,6 +603,13 @@ export function GroupsBrowser({
           Object.entries(manual.workspaceOrder).map(([key, ids]): [string, string[]] => [key === from ? name : key, ids]),
         ),
         categoryOrder: manual.categoryOrder.map(key => key === from ? name : key),
+        // Appearance is keyed by display name too: move the entry instead of
+        // leaving the colour/icon/pin behind under the old name.
+        appearance: from === undefined || from === name
+          ? manual.appearance
+          : Object.fromEntries(
+              Object.entries(manual.appearance).map(([key, value]): [string, CategoryAppearance] => [key === from ? name : key, value]),
+            ),
       }
     }
 
@@ -591,6 +650,11 @@ export function GroupsBrowser({
       assignments,
       workspaceOrder,
       categoryOrder: manual.categoryOrder.filter(key => key !== name),
+      // Drop the presentation entry with the group itself (a dangling key would
+      // silently re-attach if a new group ever reused the name).
+      appearance: Object.fromEntries(
+        Object.entries(manual.appearance).filter(([key]) => key !== name),
+      ),
       ...(originalRule !== undefined
         ? {
             renamed: Object.fromEntries(Object.entries(manual.renamed).filter(([key]) => key !== originalRule)),
@@ -705,7 +769,22 @@ export function GroupsBrowser({
       const categoryOrder = afterKey !== undefined
         ? moveAfter(order, draggedKey, afterKey)
         : moveBefore(order, draggedKey, beforeKey)
-      const next: NormalizedManual = { ...manual, categoryOrder }
+      // Pinned groups sort before unpinned ones, so a drop across that boundary
+      // only sticks when the dragged group adopts the neighbour's pin state in
+      // the SAME write. Otherwise the derived order snaps it back and the drop
+      // looks broken (spec §7.2).
+      const neighbourKey = afterKey ?? beforeKey
+      let appearance = manual.appearance
+      if (neighbourKey !== undefined && isCategoryPinned(manual, neighbourKey) !== isCategoryPinned(manual, draggedKey)) {
+        const cleaned = pruneAppearance({
+          ...(manual.appearance[draggedKey] ?? {}),
+          pinned: isCategoryPinned(manual, neighbourKey),
+        })
+        appearance = { ...manual.appearance }
+        if (cleaned === undefined) delete appearance[draggedKey]
+        else appearance[draggedKey] = cleaned
+      }
+      const next: NormalizedManual = { ...manual, categoryOrder, appearance }
       await saveManualOverlay(next)
       setManual(next)
       setManualError(null)
@@ -714,6 +793,61 @@ export function GroupsBrowser({
     } finally {
       setManualSaving(false)
     }
+  }
+
+  /**
+   * Merge a presentation patch for one group and persist the overlay.
+   * Optimistic: the tree reflects the change immediately and rolls back if the
+   * host refuses the write (the dialog has no confirm step).
+   */
+  const updateCategoryAppearance = async (key: string, patch: CategoryAppearance): Promise<void> => {
+    if (manualSaving) return
+    setManualSaving(true)
+    const previous = manual
+    try {
+      const merged: CategoryAppearance = { ...(manual.appearance[key] ?? {}), ...patch }
+      const appearance = { ...manual.appearance }
+      const cleaned = pruneAppearance(merged)
+      if (cleaned === undefined) delete appearance[key]
+      else appearance[key] = cleaned
+      const next: NormalizedManual = { ...manual, appearance }
+      setManual(next)
+      await saveManualOverlay(next)
+      setManualError(null)
+    } catch (reason) {
+      setManual(previous)
+      setManualError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setManualSaving(false)
+    }
+  }
+
+  /** Pin/unpin a group (pinned groups render above the normal order). */
+  const toggleCategoryPinned = async (key: string): Promise<void> => {
+    await updateCategoryAppearance(key, { pinned: !isCategoryPinned(manual, key) })
+  }
+
+  /** Appearance currently shown in the dialog (empty while it is closed). */
+  const appearanceCurrent: CategoryAppearance = appearanceTarget === null
+    ? {}
+    : (manual.appearance[appearanceTarget] ?? {})
+
+  /**
+   * Commit the custom-icon text field. Invalid input is blocked locally (the
+   * host would 400 the whole overlay save); an empty field clears the icon.
+   */
+  const commitAppearanceIcon = (): void => {
+    if (appearanceTarget === null) return
+    const icon = (appearanceDraft.icon ?? '').trim()
+    if (icon !== '' && !ICON_VALUE_PATTERN.test(icon)) {
+      setAppearanceError(t('group.iconInvalid'))
+      return
+    }
+    setAppearanceError(null)
+    /* Blur fires before a neighbouring click and on every dialog close: skip
+       the PUT when the field still matches the stored value. */
+    if (icon === (appearanceCurrent.icon ?? '')) return
+    void updateCategoryAppearance(appearanceTarget, { icon: icon === '' ? undefined : icon })
   }
 
   /**
@@ -1028,6 +1162,13 @@ export function GroupsBrowser({
                   setGroupDeleteTarget(category.key)
                   setGroupDeleteError(null)
                 }}
+                onGroupTogglePin={() => { void toggleCategoryPinned(category.key) }}
+                onGroupAppearance={() => {
+                  setAppearanceDraft(manual.appearance[category.key] ?? {})
+                  setAppearanceError(null)
+                  setAppearanceTarget(category.key)
+                }}
+                animate={dragging === null}
                 onMoveOut={(workspaceId) => { void moveWorkspaceTo(workspaceId, UNCATEGORIZED_KEY) }}
                 onOpenInFolder={openInFolder}
                 canMoveOut={(workspaceId) => {
@@ -1125,6 +1266,109 @@ export function GroupsBrowser({
       >
         <div className="wgAddError">{t('group.deleteConfirm')}</div>
         {groupDeleteError !== null && <div className="wgAddError" role="alert">{groupDeleteError}</div>}
+      </Modal>
+
+      {/* Group appearance dialog: every control writes immediately (optimistic
+          patch + rollback banner), so the footer is only "done". */}
+      <Modal
+        open={appearanceTarget !== null}
+        onClose={() => { setAppearanceTarget(null) }}
+        closeLabel={t('group.appearanceDone')}
+        title={t('group.appearanceTitle')}
+        footer={(
+          <Button variant="primary" onClick={() => { setAppearanceTarget(null) }}>{t('group.appearanceDone')}</Button>
+        )}
+      >
+        {appearanceTarget !== null && (
+          <>
+            <div className="wgAppearanceSection">
+              <div className="wgAppearanceLabel">{t('group.color')}</div>
+              <div className="wgSwatchRow" role="group" aria-label={t('group.color')}>
+                <button
+                  type="button"
+                  className={`wgSwatch wgSwatchDefault${appearanceCurrent.color === undefined ? ' wgSwatchActive' : ''}`}
+                  aria-pressed={appearanceCurrent.color === undefined}
+                  aria-label={t('group.colorDefault')}
+                  title={t('group.colorDefault')}
+                  disabled={manualSaving}
+                  onClick={() => { void updateCategoryAppearance(appearanceTarget, { color: undefined }) }}
+                />
+                {GROUP_COLORS.map((color) => {
+                  const active = appearanceCurrent.color === color
+                  return (
+                    <button
+                      key={color}
+                      type="button"
+                      className={`wgSwatch${active ? ' wgSwatchActive' : ''}`}
+                      data-wg-color={color}
+                      aria-pressed={active}
+                      aria-label={t(COLOR_LABEL_KEYS[color])}
+                      title={t(COLOR_LABEL_KEYS[color])}
+                      disabled={manualSaving}
+                      onClick={() => { void updateCategoryAppearance(appearanceTarget, { color }) }}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+            <div className="wgAppearanceSection">
+              <div className="wgAppearanceLabel">{t('group.icon')}</div>
+              <div className="wgIconGrid" role="group" aria-label={t('group.icon')}>
+                {GROUP_ICON_IDS.map((id) => {
+                  const active = appearanceCurrent.icon === id
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className="wgIconCell"
+                      aria-pressed={active}
+                      aria-label={id}
+                      title={id}
+                      disabled={manualSaving}
+                      onClick={() => {
+                        setAppearanceDraft({ ...appearanceDraft, icon: id })
+                        setAppearanceError(null)
+                        void updateCategoryAppearance(appearanceTarget, { icon: id })
+                      }}
+                    >
+                      <CategoryGlyph icon={id} />
+                    </button>
+                  )
+                })}
+              </div>
+              <input
+                className="wgRenameInput"
+                value={appearanceDraft.icon ?? ''}
+                aria-label={t('group.iconCustom')}
+                placeholder={t('group.iconDefault')}
+                disabled={manualSaving}
+                onChange={(e) => {
+                  setAppearanceDraft({ ...appearanceDraft, icon: e.target.value })
+                  setAppearanceError(null)
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitAppearanceIcon() }}
+                onBlur={(event) => {
+                  /* A swatch / preset click moves focus out of the field in the
+                     same gesture and writes its own patch — committing the stale
+                     draft here would race it and could overwrite the preset. */
+                  const next = event.relatedTarget
+                  if (next instanceof Element && next.closest('.wgSwatch, .wgIconCell') !== null) return
+                  commitAppearanceIcon()
+                }}
+              />
+            </div>
+            <div className="wgAppearanceSection">
+              <Button
+                variant={appearanceCurrent.pinned === true ? 'primary' : 'outline'}
+                disabled={manualSaving}
+                onClick={() => { void updateCategoryAppearance(appearanceTarget, { pinned: appearanceCurrent.pinned !== true }) }}
+              >
+                {appearanceCurrent.pinned === true ? t('group.unpin') : t('group.pin')}
+              </Button>
+            </div>
+            {appearanceError !== null && <div className="wgAddError" role="alert">{appearanceError}</div>}
+          </>
+        )}
       </Modal>
 
       {/* Workspace rename dialog */}
@@ -1251,12 +1495,14 @@ function categoriesForCurrent(
 }
 
 /** One category section: header row + expanded workspace folders. */
-function CategorySection({ category, current, now, t, dragIndicator, onDragOverRow, onDragLeaveRow, onDropRow, onDragStartCategory, onDragStartWorkspace, onToggleCategory, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onGroupRename, onGroupDelete, onMoveOut, canMoveOut, onOpenInFolder }: {
+function CategorySection({ category, current, now, t, dragIndicator, onDragOverRow, onDragLeaveRow, onDropRow, onDragStartCategory, onDragStartWorkspace, onToggleCategory, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onGroupRename, onGroupDelete, onGroupTogglePin, onGroupAppearance, animate, onMoveOut, canMoveOut, onOpenInFolder }: {
   category: CategoryNode
   current: SessionId | undefined
   now: number
   t: GroupsBrowserProps['t']
   dragIndicator: DragIndicator
+  /** Whether the disclosure animation may play (false while a drag folds rows). */
+  animate: boolean
   onDragOverRow: (row: DropRowRef) => (event: DragEvent) => void
   onDragLeaveRow: (event: DragEvent) => void
   /** Drop factory: bind the target category and the row kind (before/after re-derived at drop time). */
@@ -1274,6 +1520,10 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
   onFork: (sessionId: SessionId) => void
   onGroupRename: () => void
   onGroupDelete: () => void
+  /** Pin/unpin this group from its row menu. */
+  onGroupTogglePin: () => void
+  /** Open the appearance dialog for this group. */
+  onGroupAppearance: () => void
   onMoveOut: (workspaceId: WorkspaceId) => void
   canMoveOut: (workspaceId: WorkspaceId) => boolean
   /** Absent when the host resolved no folder application. */
@@ -1291,6 +1541,8 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
         onToggle={onToggleCategory}
         onRename={onGroupRename}
         onDelete={onGroupDelete}
+        onTogglePin={onGroupTogglePin}
+        onEditAppearance={onGroupAppearance}
         onDragStartCategory={onDragStartCategory}
         dropActive={categoryInto}
         {...(categoryLine !== undefined ? { insertLine: categoryLine } : {})}
@@ -1298,52 +1550,56 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
         onRowDragLeave={onDragLeaveRow}
         onRowDrop={onDropRow(category.key, { kind: 'category', key: category.key })}
       />
-      {category.expanded && (
-        <div role="group">
-          {category.workspaces.map((workspace) => (
-            <div key={workspace.workspaceId} role="group">
-              <WorkspaceRow
-                node={workspace}
-                t={t}
-                onToggle={() => { onToggleWorkspace(workspace.workspaceId as string) }}
-                onNewSession={() => { onNewSession(workspace.workspaceId) }}
-                onRename={() => { onRenameRequest(workspace.workspaceId, workspace.label) }}
-                onDelete={() => { onDeleteRequest(workspace.workspaceId, workspace.label) }}
-                canMoveOut={canMoveOut(workspace.workspaceId)}
-                onMoveOut={() => { onMoveOut(workspace.workspaceId) }}
-                {...(onOpenInFolder !== undefined
-                  ? { onOpenInFolder: () => { onOpenInFolder(workspace.workspaceId) } }
-                  : {})}
-                dropActive={false}
-                {...(dragIndicator?.mode === 'line' && dragIndicator.row.kind === 'workspace' && dragIndicator.row.key === workspace.workspaceId
-                  ? { insertLine: dragIndicator.before ? 'before' : 'after' }
-                  : {})}
-                onRowDragOver={onDragOverRow({ kind: 'workspace', key: workspace.workspaceId })}
-                onRowDragLeave={onDragLeaveRow}
-                onRowDrop={onDropRow(category.key, { kind: 'workspace', key: workspace.workspaceId })}
-                onDragStartExtra={onDragStartWorkspace(workspace.workspaceId)}
-              />
-              {workspace.expanded && (
-                <TreeChildren>
-                  {workspace.sessions.map((session) => (
-                    <SessionRow
-                      key={session.id}
-                      node={session}
-                      currentId={current}
-                      now={now}
-                      t={t}
-                      onOpen={onOpen}
-                      onRename={onSessionRename}
-                      onFork={onFork}
-                      onArchive={onSessionArchive}
-                    />
-                  ))}
-                </TreeChildren>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <RowGroup
+        expanded={category.expanded}
+        className="wgCategoryChildren"
+        animate={animate && categoryRowCount(category) <= ANIMATION_ROW_CAP}
+      >
+        {category.workspaces.map((workspace) => (
+          <div key={workspace.workspaceId} role="group">
+            <WorkspaceRow
+              node={workspace}
+              t={t}
+              onToggle={() => { onToggleWorkspace(workspace.workspaceId as string) }}
+              onNewSession={() => { onNewSession(workspace.workspaceId) }}
+              onRename={() => { onRenameRequest(workspace.workspaceId, workspace.label) }}
+              onDelete={() => { onDeleteRequest(workspace.workspaceId, workspace.label) }}
+              canMoveOut={canMoveOut(workspace.workspaceId)}
+              onMoveOut={() => { onMoveOut(workspace.workspaceId) }}
+              {...(onOpenInFolder !== undefined
+                ? { onOpenInFolder: () => { onOpenInFolder(workspace.workspaceId) } }
+                : {})}
+              dropActive={false}
+              {...(dragIndicator?.mode === 'line' && dragIndicator.row.kind === 'workspace' && dragIndicator.row.key === workspace.workspaceId
+                ? { insertLine: dragIndicator.before ? 'before' : 'after' }
+                : {})}
+              onRowDragOver={onDragOverRow({ kind: 'workspace', key: workspace.workspaceId })}
+              onRowDragLeave={onDragLeaveRow}
+              onRowDrop={onDropRow(category.key, { kind: 'workspace', key: workspace.workspaceId })}
+              onDragStartExtra={onDragStartWorkspace(workspace.workspaceId)}
+            />
+            <RowGroup
+              expanded={workspace.expanded}
+              className="wgTreeChildren"
+              animate={animate && workspace.sessions.length <= ANIMATION_ROW_CAP}
+            >
+              {workspace.sessions.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  node={session}
+                  currentId={current}
+                  now={now}
+                  t={t}
+                  onOpen={onOpen}
+                  onRename={onSessionRename}
+                  onFork={onFork}
+                  onArchive={onSessionArchive}
+                />
+              ))}
+            </RowGroup>
+          </div>
+        ))}
+      </RowGroup>
     </div>
   )
 }
@@ -1424,23 +1680,25 @@ function TopLevelSection({ topLevel, current, now, t, dragging, dragIndicator, t
             onRowDrop={onDropRow(UNCATEGORIZED_KEY, { kind: 'topLevel', key: workspace.workspaceId })}
             onDragStartExtra={onDragStartWorkspace(workspace.workspaceId)}
           />
-          {workspace.expanded && (
-            <TreeChildren>
-              {workspace.sessions.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  node={session}
-                  currentId={current}
-                  now={now}
-                  t={t}
-                  onOpen={onOpen}
-                  onRename={onSessionRename}
-                  onFork={onFork}
-                  onArchive={onSessionArchive}
-                />
-              ))}
-            </TreeChildren>
-          )}
+          <RowGroup
+            expanded={workspace.expanded}
+            className="wgTreeChildren"
+            animate={!dragging && workspace.sessions.length <= ANIMATION_ROW_CAP}
+          >
+            {workspace.sessions.map((session) => (
+              <SessionRow
+                key={session.id}
+                node={session}
+                currentId={current}
+                now={now}
+                t={t}
+                onOpen={onOpen}
+                onRename={onSessionRename}
+                onFork={onFork}
+                onArchive={onSessionArchive}
+              />
+            ))}
+          </RowGroup>
         </div>
       ))}
     </div>

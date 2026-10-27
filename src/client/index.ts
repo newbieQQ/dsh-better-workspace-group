@@ -139,7 +139,12 @@ export function apply(ctx: Context): void {
     void loadTabs().then((tabs) => {
       if (cancelled) return
       if (tabs.length > 0) {
-        tabWrites.restore(tabs.map(tab => ({ sessionId: tab.sessionId as SessionId, order: tab.order })))
+        tabWrites.restore(tabs.map(tab => ({
+          sessionId: tab.sessionId as SessionId,
+          order: tab.order,
+          ...(tab.pinned === true ? { pinned: true } : {}),
+          ...(tab.title !== undefined ? { title: tab.title } : {}),
+        })))
       }
       hydrated = true
     }).catch(() => {

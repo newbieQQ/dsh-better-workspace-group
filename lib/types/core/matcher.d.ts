@@ -10,13 +10,22 @@
  * override when present. Hidden rule categories are inert: workspaces that
  * would match them become top-level (ungrouped).
  */
-import { type GroupCategory, type GroupsConfig, type ManualGroups } from './types.ts';
+import { type CategoryAppearance, type GroupCategory, type GroupsConfig, type ManualGroups } from './types.ts';
 /** Classify a workspace by rules only; hidden categories are inert. */
 export declare function classify(categories: readonly GroupCategory[], path: string, title: string): GroupCategory | undefined;
 /** Display name of a rule category: the rename override when present. */
 export declare function ruleDisplayName(manual: ManualGroups | undefined, originalName: string): string;
 /** Whether a rule category has been hidden by a UI delete. */
 export declare function isHiddenRule(manual: ManualGroups | undefined, originalName: string): boolean;
+/** Presentation for a category display key, or undefined when unset. */
+export declare function categoryAppearance(manual: ManualGroups | undefined, key: string): CategoryAppearance | undefined;
+/** Whether a category display key is pinned. */
+export declare function isCategoryPinned(manual: ManualGroups | undefined, key: string): boolean;
+/**
+ * Drop empty presentation fields: `undefined` values, `pinned: false`, `icon: ''`.
+ * Returns undefined when nothing is left, so callers can delete the whole entry.
+ */
+export declare function pruneAppearance(value: CategoryAppearance): CategoryAppearance | undefined;
 /** Rule category display names, in YAML render order (hidden ones excluded). */
 export declare function ruleDisplayNames(categories: readonly GroupCategory[], manual: ManualGroups | undefined): string[];
 /** Original YAML rule name whose display name equals `key` (undefined when none). */
@@ -27,6 +36,11 @@ export declare function originalRuleNameForDisplay(categories: readonly GroupCat
  * creation order — unless `manual.categoryOrder` overrides the sequence.
  * Top-level (ungrouped) workspaces are never included; they render as
  * separate top-level rows after the group folders.
+ *
+ * The pin partition is part of DISPLAY ORDER, not a render-time concern:
+ * pinned groups sort before unpinned ones *within* the manual order, and both
+ * the tree and the drag-drop landing neighbours read this list, so they can
+ * never disagree about what sits next to what.
  */
 export interface EffectiveCategory {
     /** Display key (what the tree renders and assignments reference). */

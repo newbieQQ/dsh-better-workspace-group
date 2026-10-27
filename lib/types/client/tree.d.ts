@@ -8,7 +8,7 @@ import type { SessionListState, SessionSearchResultItem } from '@deepseek-ai/dsh
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client';
 import type { SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
-import { type GroupsConfig, type ManualGroups } from '../core/types.ts';
+import { type CategoryAppearance, type GroupsConfig, type ManualGroups } from '../core/types.ts';
 /** Pending interaction kinds with dedicated Workspace-row presentation. */
 export type SessionPendingInteractionStatus = 'approval' | 'plan-review' | 'question';
 /** Current unified UI status by Session (ui-session snapshot). */
@@ -70,6 +70,8 @@ export interface CategoryNode {
     containsCurrent: boolean;
     /** Workspace folders in host order. */
     workspaces: readonly WorkspaceGroupNode[];
+    /** Presentation (color / icon / pin) for this category, when configured. */
+    appearance?: CategoryAppearance;
 }
 /** Viewing state consumed by the derivation. */
 export interface GroupsTreeView {

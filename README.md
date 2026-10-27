@@ -64,6 +64,20 @@
 - **Distinct row icons**: group rows use a folder glyph, project rows a project glyph
   (same as the official workspace browser) — groups and projects are easy to tell apart
 
+### Group appearance (color / icon / pin)
+
+- **Per-group colour**: ten palette accents, painted as a 2px inset bar on the group row
+  together with a tinted folder glyph
+- **Per-group icon**: twenty built-in glyphs taken from the DSH icon set, or a 1–4 character
+  custom glyph (emoji or latin) — an unknown value falls back to the folder icon instead of
+  erroring, so data and client versions can move independently
+- **Pin groups**: pinned groups sort to the front of the tree; dragging a group across the pin
+  boundary re-pins it in the same write, so the drop lands where the indicator showed it
+- **Animated folding**: expanding/collapsing a group or project animates rows and fades the
+  flower-branch overlay while they move, so the vine never drifts; animation is skipped for
+  large subtrees, during drag folding, and under `prefers-reduced-motion`
+- Stored in the overlay's `appearance` map — **never in the rule YAML** (see below)
+
 ### Search & operations
 - **Tree-shaped search**: results keep the three-level structure (category → project → matched
   session), matched rows highlighted with a content snippet, 250ms debounce
@@ -73,7 +87,8 @@
 ### Persistence & zero intrusion
 - Every manual action (groups, grouping, ordering, rename, hide) is written to the plugin's own
   overlay (`~/.dsh/workspace-groups.manual.json`), validated by the host and **written
-  atomically** (a malformed write returns 400 and keeps the previous file)
+  atomically** (a malformed write returns 400 and keeps the previous file); the tab strip gets
+  the same treatment in its own file (`~/.dsh/workspace-groups.tabs.json`)
 - **Zero intrusion**: never touches `~/.dsh/storages/workspace.json`, session on-disk
   structures, or the official `@deepseek-ai/dsh-client-ui-workspace` package; the rule YAML
   is never rewritten
@@ -188,7 +203,11 @@ UI operations**, at `$DSH_HOME/workspace-groups.manual.json` (e.g. `~/.dsh/works
   "categoryOrder": ["临时", "DSH 插件"],
   "workspaceOrder": { "临时": ["a1b2c3d4-e5f6-7890-abcd-ef1234567890"] },
   "renamed": { "DSH 插件": "插件集" },
-  "hidden": ["文档"]
+  "hidden": ["文档"],
+  "appearance": {
+    "插件集": { "color": "blue", "icon": "code", "pinned": true },
+    "临时": { "color": "amber" }
+  }
 }
 ```
 
@@ -201,6 +220,18 @@ UI operations**, at `$DSH_HOME/workspace-groups.manual.json` (e.g. `~/.dsh/works
 - `workspaceOrder` — per-group manual ordering of projects (written by drag ordering).
 - `renamed` / `hidden` — UI rename/delete of rule categories (a hidden category's rules become
   inert and its matches go top-level); the rule YAML stays untouched.
+- `appearance` — per-group presentation keyed by **display name** (same key space as
+  `categoryOrder`): `color` (one of `red`/`orange`/`amber`/`green`/`teal`/`blue`/`indigo`/
+  `purple`/`pink`/`gray`), `icon` (a built-in icon id or a 1–4 character glyph) and
+  `pinned` (sort before unpinned groups). Every sub-field is optional and empty values are
+  dropped on write, so un-styling a group removes the entry instead of storing `false`/`''`.
+  A key whose category no longer exists is **tolerated on read and on write** — otherwise
+  deleting one YAML category would make every later save fail with 400. Colours/icons live
+  here only: `parseGroupsConfig` drops unknown YAML keys, so a `color:` in the sidecar is
+  silently ignored.
+- **Downgrade note**: an older build rewrites the whole overlay and would drop the
+  `appearance` map on its next save (same class of risk as `categoryOrder`). Copy
+  `workspace-groups.manual.json` aside before rolling the plugin back.
 - The file is written in full by the browser UI (`PUT /workspace-groups/manual`, atomic
   replace); manual edits also take effect on next load. A malformed write returns 400 and
   keeps the previous file — the rule YAML is never at risk.
@@ -209,11 +240,31 @@ UI operations**, at `$DSH_HOME/workspace-groups.manual.json` (e.g. `~/.dsh/works
 |---|---|
 | Create group | "新建分组" button in the section header (folder icon), enter a name in the dialog |
 | Rename/delete group | hover `⋯` menu on **any** group (rule categories included); deleting sends its projects back to the top level |
+| Style a group | `⋯` menu → "颜色与图标…": colour palette, icon grid and a custom-glyph field; every click is written immediately (no OK button) |
+| Pin a group | `⋯` menu → "置顶分组" / "取消置顶"; dragging a group across the pin boundary flips it in the same write |
 | Drag project into group | drag a project row onto a target group row / any project row inside a group, release to move |
 | Reorder projects | drag a project row onto another project row in the same group: **top half = insert before, bottom half = insert after** (indicator shows the spot); all project rows fold while dragging and restore on dragend |
 | Reorder top-level projects | drag a top-level row onto another top-level row: **top half = insert before, bottom half = insert after**; order persists under `workspaceOrder["__topLevel__"]` |
 | Move out of a group | drop anywhere on the **top-level area** (an insertion line shows the spot — reorder before/after a top-level row, or append below the last row; when the top level is empty a line shows under the last group), or the project row's "移出分组" menu (forced top-level) |
 | Reorder groups | drag a group row onto another group row: **top half = move before, bottom half = move after** (indicator shows the spot; all groups fold while dragging, restored on dragend) |
+
+## Session tabs (tab strip)
+
+A horizontal tab strip is seated above the tree — one chip per session you have opened, each
+showing its project name and tab label:
+
+- **Open / activate / close**: opening a session adds a chip at the end of the strip; click a
+  chip to make that session the open one; the `×` closes it.
+- **Middle-click** a chip to close it; **drag** a chip to reorder the strip. Pinned chips stay
+  in the leading pinned block, and a drag never crosses that boundary.
+- **Rename a tab**: double-click a chip to give the tab its own label (blank restores the
+  session title). Renaming the session itself stays in the context menu, so a tab label never
+  rewrites the session title.
+- **Context menu**: pin/unpin, rename tab, rename session, close, **close others** and
+  **close tabs to the right**. "Close others" always keeps pinned chips.
+- **Persisted**: the strip is stored in `$DSH_HOME/workspace-groups.tabs.json` via the host
+  routes `GET/PUT /workspace-groups/tabs`. A strip stored by an older build (no pin/label
+  fields) upgrades transparently — absent fields simply read as "unpinned, no custom label".
 
 ## Topics
 

@@ -28,6 +28,7 @@ import {
 import {
   defaultTabsPath,
   documentForTabs,
+  parsePersistedTab,
   readTabsDocument,
   writeTabsDocument,
   type PersistedTab,
@@ -69,13 +70,11 @@ function parseTabsPayload(raw: unknown): { order: number; tabs: PersistedTab[] }
   const tabs: PersistedTab[] = []
   const seen = new Set<string>()
   for (const entry of source.tabs) {
-    if (typeof entry !== 'object' || entry === null) continue
-    const row = entry as Record<string, unknown>
-    if (typeof row.sessionId !== 'string' || row.sessionId === '') continue
-    if (typeof row.order !== 'number' || !Number.isFinite(row.order)) continue
-    if (seen.has(row.sessionId)) continue
-    seen.add(row.sessionId)
-    tabs.push({ sessionId: row.sessionId, order: row.order })
+    const tab = parsePersistedTab(entry)
+    if (tab === null) continue
+    if (seen.has(tab.sessionId)) continue
+    seen.add(tab.sessionId)
+    tabs.push(tab)
   }
   return { order: source.order, tabs }
 }

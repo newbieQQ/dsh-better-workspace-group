@@ -13,6 +13,7 @@
 import {
   normalizePath,
   UNCATEGORIZED_LABEL,
+  type CategoryAppearance,
   type GroupCategory,
   type GroupRule,
   type GroupsConfig,
@@ -50,6 +51,31 @@ export function isHiddenRule(manual: ManualGroups | undefined, originalName: str
   return manual?.hidden?.includes(originalName) ?? false
 }
 
+/** Presentation for a category display key, or undefined when unset. */
+export function categoryAppearance(
+  manual: ManualGroups | undefined,
+  key: string,
+): CategoryAppearance | undefined {
+  return manual?.appearance?.[key]
+}
+
+/** Whether a category display key is pinned. */
+export function isCategoryPinned(manual: ManualGroups | undefined, key: string): boolean {
+  return categoryAppearance(manual, key)?.pinned === true
+}
+
+/**
+ * Drop empty presentation fields: `undefined` values, `pinned: false`, `icon: ''`.
+ * Returns undefined when nothing is left, so callers can delete the whole entry.
+ */
+export function pruneAppearance(value: CategoryAppearance): CategoryAppearance | undefined {
+  const result: CategoryAppearance = {}
+  if (value.color !== undefined) result.color = value.color
+  if (value.icon !== undefined && value.icon.trim() !== '') result.icon = value.icon
+  if (value.pinned === true) result.pinned = true
+  return Object.keys(result).length === 0 ? undefined : result
+}
+
 /** Rule category display names, in YAML render order (hidden ones excluded). */
 export function ruleDisplayNames(categories: readonly GroupCategory[], manual: ManualGroups | undefined): string[] {
   const names: string[] = []
@@ -75,12 +101,43 @@ export function originalRuleNameForDisplay(
  * creation order — unless `manual.categoryOrder` overrides the sequence.
  * Top-level (ungrouped) workspaces are never included; they render as
  * separate top-level rows after the group folders.
+ *
+ * The pin partition is part of DISPLAY ORDER, not a render-time concern:
+ * pinned groups sort before unpinned ones *within* the manual order, and both
+ * the tree and the drag-drop landing neighbours read this list, so they can
+ * never disagree about what sits next to what.
  */
 export interface EffectiveCategory {
   /** Display key (what the tree renders and assignments reference). */
   key: string
   /** Origin: a YAML rule category or a manual group. */
   source: 'rule' | 'manual'
+}
+
+/** Apply `manual.categoryOrder` to the default sequence (stable). */
+function orderByCategoryOrder(
+  entries: EffectiveCategory[],
+  order: readonly string[] | undefined,
+): EffectiveCategory[] {
+  if (order === undefined || order.length === 0) return entries
+  // Stable sort by position in categoryOrder; entries absent from the order
+  // keep their relative default position after all ordered ones.
+  const position = new Map(order.map((key, index) => [key, index]))
+  return [...entries].sort((a, b) => {
+    const pa = position.get(a.key)
+    const pb = position.get(b.key)
+    if (pa !== undefined && pb !== undefined) return pa - pb
+    if (pa !== undefined) return -1
+    if (pb !== undefined) return 1
+    return 0
+  })
+}
+
+/** Stable partition: pinned groups first, unpinned ones keep their order. */
+function pinnedFirst(entries: EffectiveCategory[], manual: ManualGroups | undefined): EffectiveCategory[] {
+  if (manual?.appearance === undefined) return entries
+  const pinned = (entry: EffectiveCategory): number => Number(isCategoryPinned(manual, entry.key))
+  return [...entries].sort((a, b) => pinned(b) - pinned(a))
 }
 
 export function effectiveCategories(
@@ -101,19 +158,7 @@ export function effectiveCategories(
     seen.add(name)
     entries.push({ key: name, source: 'manual' })
   }
-  const order = manual?.categoryOrder
-  if (order === undefined || order.length === 0) return entries
-  // Stable sort by position in categoryOrder; entries absent from the order
-  // keep their relative default position after all ordered ones.
-  const position = new Map(order.map((key, index) => [key, index]))
-  return [...entries].sort((a, b) => {
-    const pa = position.get(a.key)
-    const pb = position.get(b.key)
-    if (pa !== undefined && pb !== undefined) return pa - pb
-    if (pa !== undefined) return -1
-    if (pb !== undefined) return 1
-    return 0
-  })
+  return pinnedFirst(orderByCategoryOrder(entries, manual?.categoryOrder), manual)
 }
 
 /** Display keys of all effective categories (top-level workspaces excluded). */

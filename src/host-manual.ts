@@ -13,7 +13,14 @@ import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { ruleDisplayName } from './core/matcher.ts'
-import { TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL, type ManualGroups } from './core/types.ts'
+import {
+  GROUP_COLORS,
+  TOP_LEVEL_ORDER_KEY,
+  UNCATEGORIZED_LABEL,
+  type CategoryAppearance,
+  type GroupColor,
+  type ManualGroups,
+} from './core/types.ts'
 
 /** Default overlay location: `$DSH_HOME/workspace-groups.manual.json`. */
 export function defaultManualPath(): string {
@@ -104,6 +111,18 @@ export function parseManualGroups(raw: unknown): ManualGroups {
     }
     manual.renamed = renamed
   }
+  if (source.appearance !== undefined) {
+    if (typeof source.appearance !== 'object' || source.appearance === null || Array.isArray(source.appearance)) {
+      throw new Error('workspace-groups.manual.json: appearance must be a mapping')
+    }
+    const appearance: Record<string, CategoryAppearance> = {}
+    for (const [key, value] of Object.entries(source.appearance)) {
+      if (key.trim() === '') throw new Error('workspace-groups.manual.json: appearance keys must be non-empty')
+      const parsed = parseAppearance(value, key)
+      if (parsed !== undefined) appearance[key.trim()] = parsed
+    }
+    if (Object.keys(appearance).length > 0) manual.appearance = appearance
+  }
   if (source.workspaceOrder !== undefined) {
     if (typeof source.workspaceOrder !== 'object' || source.workspaceOrder === null || Array.isArray(source.workspaceOrder)) {
       throw new Error('workspace-groups.manual.json: workspaceOrder must be a mapping')
@@ -119,6 +138,50 @@ export function parseManualGroups(raw: unknown): ManualGroups {
   }
 
   return manual
+}
+
+/** Preset icon ids are lowercase kebab-case; anything else must be a short glyph. */
+const ICON_PATTERN = /^(?:[a-z][a-z0-9-]{0,23}|[^\s\u0000-\u001f\u007f]{1,4})$/u
+
+/** Narrow an unknown value to a palette id from the shared whitelist. */
+function isGroupColor(value: unknown): value is GroupColor {
+  return GROUP_COLORS.some(color => color === value)
+}
+
+/**
+ * Parse one appearance entry. Unknown sub-keys are dropped; an entry that ends
+ * up empty is dropped entirely (returns undefined) so the file stays minimal.
+ */
+function parseAppearance(value: unknown, key: string): CategoryAppearance | undefined {
+  const field = `appearance["${key}"]`
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`workspace-groups.manual.json: ${field} must be an object`)
+  }
+  const source = value as Record<string, unknown>
+  const appearance: CategoryAppearance = {}
+  if (source.color !== undefined) {
+    if (!isGroupColor(source.color)) {
+      throw new Error(
+        `workspace-groups.manual.json: ${field}.color must be one of: ${GROUP_COLORS.join(', ')}`,
+      )
+    }
+    appearance.color = source.color
+  }
+  if (source.icon !== undefined) {
+    const icon = typeof source.icon === 'string' ? source.icon.trim() : ''
+    if (icon === '' || !ICON_PATTERN.test(icon)) {
+      throw new Error(`workspace-groups.manual.json: ${field}.icon must be an icon id or a 1–4 character glyph`)
+    }
+    appearance.icon = icon
+  }
+  if (source.pinned !== undefined) {
+    if (typeof source.pinned !== 'boolean') {
+      throw new Error(`workspace-groups.manual.json: ${field}.pinned must be a boolean`)
+    }
+    // Never persist `pinned: false` — an absent flag already means unpinned.
+    if (source.pinned) appearance.pinned = true
+  }
+  return Object.keys(appearance).length === 0 ? undefined : appearance
 }
 
 /** Parse a list of non-empty strings, optionally de-duplicated. */
@@ -186,6 +249,10 @@ export function validateManualGroups(manual: ManualGroups, ruleCategoryNames: re
       throw new Error(`workspace-groups.manual.json: hidden references unknown rule category "${original}"`)
     }
   }
+  // `appearance` is deliberately NOT cross-validated against existing
+  // categories: a presentation entry for a temporarily removed YAML category
+  // must survive, otherwise removing one category from the YAML would make
+  // every subsequent overlay save fail with 400 and freeze the whole tree.
 }
 
 /** Read + parse the overlay file. A missing file yields an empty overlay. */

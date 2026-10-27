@@ -23,6 +23,10 @@ export declare const TABS_ROUTE = "/workspace-groups/tabs";
 export interface WireTab {
     readonly sessionId: string;
     readonly order: number;
+    /** Pinned tabs are restored at the front of the strip. */
+    readonly pinned?: boolean;
+    /** A label the user typed for the tab itself (absent = follow the session). */
+    readonly title?: string;
 }
 /**
  * Fetch the stored strip.

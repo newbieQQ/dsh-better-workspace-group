@@ -7,11 +7,13 @@ import { describe, expect, it } from 'vitest'
 import {
   displayCategoryKeys,
   effectiveCategories,
+  isCategoryPinned,
   isManualOnlyCategory,
   moveAfter,
   moveBefore,
   orderedWorkspaceIds,
   originalRuleNameForDisplay,
+  pruneAppearance,
   resolveCategory,
   ruleDisplayName,
   takenCategoryNames,
@@ -141,6 +143,46 @@ describe('isManualOnlyCategory', () => {
 
   it('false when the overlay is absent', () => {
     expect(isManualOnlyCategory(CONFIG, undefined, '临时')).toBe(false)
+  })
+})
+
+describe('category appearance (pin partition)', () => {
+  it('pinned groups sort first, each partition keeping the default order', () => {
+    const manual: ManualGroups = {
+      categories: ['临时', '归档'],
+      assignments: {},
+      appearance: { '归档': { pinned: true } },
+    }
+    expect(isCategoryPinned(manual, '归档')).toBe(true)
+    expect(isCategoryPinned(manual, '临时')).toBe(false)
+    expect(displayCategoryKeys(CONFIG, manual)).toEqual(['归档', 'DSH 插件', '文档', '临时'])
+    expect(effectiveCategories(CONFIG, manual).map(entry => entry.key)).toEqual(['归档', 'DSH 插件', '文档', '临时'])
+  })
+
+  it('pin partition applies after categoryOrder (composite display order)', () => {
+    const manual: ManualGroups = {
+      categories: ['临时'],
+      assignments: {},
+      categoryOrder: ['临时', '文档', 'DSH 插件'],
+      appearance: { '文档': { pinned: true } },
+    }
+    expect(displayCategoryKeys(CONFIG, manual)).toEqual(['文档', '临时', 'DSH 插件'])
+  })
+
+  it('no appearance means the untouched default order', () => {
+    expect(displayCategoryKeys(CONFIG, { categories: [], assignments: {} })).toEqual(['DSH 插件', '文档'])
+  })
+
+  it('pruneAppearance drops empty fields and returns undefined when nothing is left', () => {
+    expect(pruneAppearance({})).toBeUndefined()
+    expect(pruneAppearance({ color: undefined, icon: '  ', pinned: false })).toBeUndefined()
+    expect(pruneAppearance({ color: 'blue', pinned: false })).toEqual({ color: 'blue' })
+    expect(pruneAppearance({ icon: 'code', pinned: false })).toEqual({ icon: 'code' })
+    expect(pruneAppearance({ color: 'blue', icon: 'code', pinned: true })).toEqual({
+      color: 'blue',
+      icon: 'code',
+      pinned: true,
+    })
   })
 })
 

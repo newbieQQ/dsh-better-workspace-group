@@ -5,18 +5,14 @@
  * rows after the group folders (no "未分类" bucket).
  * Pure derivation (no DOM), fixtures cast to the runtime contract types.
  *
- * The browser runtime bundle self-registers via window.__ModuleLoader__ and
- * cannot execute in a plain node process, so the one value import it provides
- * (`indexSubagentDescendants`) is stubbed; the fixtures carry no subagents.
+ * Every import reached from `tree.ts` is type-only except `indexSubagentDescendants`,
+ * which lives in this package (`subagent-lineage.ts`) and needs no stub; the
+ * fixtures carry no subagents.
  */
-import { describe, expect, it, vi } from 'vitest'
-
-vi.mock('@deepseek-ai/dsh-client-runtime/client', () => ({
-  indexSubagentDescendants: () => new Map(),
-}))
-
-import type { SessionListState, SessionSummary, WorkspaceView } from '@deepseek-ai/dsh-client-runtime/client'
-import { deriveGroups, deriveTopLevel } from '../src/client/tree.ts'
+import { describe, expect, it } from 'vitest'
+import type { SessionListState, SessionSummary } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import { deriveGroups, deriveSearchGroups, deriveTopLevel } from '../src/client/tree.ts'
 import type { GroupsConfig, ManualGroups } from '../src/core/types.ts'
 
 const CONFIG: GroupsConfig = {
@@ -151,6 +147,35 @@ describe('deriveGroups with the manual overlay', () => {
     expect(groups.find(g => g.label === 'DSH 插件')).toBeUndefined()
     const top = deriveTopLevel(listState(workspaces), workspaces, [], CONFIG, VIEW, manual)
     expect(top.map(w => w.workspaceId)).toEqual(['ws-a', 'ws-c'])
+  })
+})
+
+describe('category appearance on the tree nodes', () => {
+  const ws = [workspace('ws-a', '/Users/zcol/Project/SomePlugin', 'DSH插件Demo', ['s1'])]
+
+  it('deriveGroups carries the appearance entry of each category', () => {
+    const manual: ManualGroups = {
+      categories: [],
+      assignments: {},
+      appearance: { 'DSH 插件': { color: 'blue', icon: 'code', pinned: true } },
+    }
+    const groups = deriveGroups(listState(ws), ws, [], CONFIG, VIEW, manual)
+    expect(groups[0]?.appearance).toEqual({ color: 'blue', icon: 'code', pinned: true })
+  })
+
+  it('deriveGroups omits appearance when the overlay has none', () => {
+    const groups = deriveGroups(listState(ws), ws, [], CONFIG, VIEW, { categories: [], assignments: {} })
+    expect(groups[0]?.appearance).toBeUndefined()
+  })
+
+  it('deriveSearchGroups carries appearance too', () => {
+    const manual: ManualGroups = {
+      categories: [],
+      assignments: {},
+      appearance: { 'DSH 插件': { color: 'red' } },
+    }
+    const tree = deriveSearchGroups(listState(ws), ws, CONFIG, new Set([session('s1', 'x').id]), [], manual)
+    expect(tree.categories[0]?.appearance).toEqual({ color: 'red' })
   })
 })
 

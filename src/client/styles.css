@@ -110,6 +110,30 @@
   position:relative;
 }
 
+/* Palette: one custom property per colour id, shared by the group row and the
+   appearance picker swatches. An uncoloured group never gets data-wg-color, so
+   existing overlays render byte-identically. */
+[data-wg-color=red]{--wg-group-tint:#d9534f}
+[data-wg-color=orange]{--wg-group-tint:#e08a3c}
+[data-wg-color=amber]{--wg-group-tint:#d9a521}
+[data-wg-color=green]{--wg-group-tint:#3fa45b}
+[data-wg-color=teal]{--wg-group-tint:#2f9e93}
+[data-wg-color=blue]{--wg-group-tint:#4a90d9}
+[data-wg-color=indigo]{--wg-group-tint:#5b6fd6}
+[data-wg-color=purple]{--wg-group-tint:#9a63c9}
+[data-wg-color=pink]{--wg-group-tint:#d4659c}
+[data-wg-color=gray]{--wg-group-tint:#8a8a8a}
+
+/* inset shadow instead of a new element: no layout shift, no clash with the
+   drag insert-line pseudo-elements above. */
+.wgCategoryRow[data-wg-color] {
+  box-shadow:inset 2px 0 0 var(--wg-group-tint);
+}
+
+.wgCategoryRow[data-wg-color] .wgCategoryIcon {
+  color:var(--wg-group-tint);
+}
+
 .wgCategoryRow:hover {
   background:var(--dsw-bg-hover,#7f7f7f1f);
 }
@@ -183,6 +207,17 @@
   color:var(--dsw-fg-3,#7f7f7fcc);
   flex:none;
   font-size:11px;
+}
+
+.wgCategoryGlyph {
+  font-size:12px;
+  line-height:1;
+}
+
+.wgCategoryPin {
+  color:var(--dsw-fg-3,#7f7f7fcc);
+  flex:none;
+  display:inline-flex;
 }
 
 .wgProjectRow {
@@ -271,6 +306,13 @@
   top:0;
   left:0;
   overflow:visible;
+  transition:opacity .12s ease;
+}
+
+/* Disclosure animation moves rows before FlowerBranch re-measures: hide the
+   vine overlay while any RowGroup animates so the stem never lags behind. */
+.wgTreeWrap:has([data-wg-animating]) .wgBranch {
+  opacity:0;
 }
 
 .wgTreeWrap>.wgList {
@@ -319,7 +361,43 @@
 }
 
 @media (prefers-reduced-motion:reduce) {
-  .wgBranchGrown,.wgBranchDot{transition:none}.wgFlowerArt{animation:none};
+  .wgBranchGrown,.wgBranchDot{transition:none}.wgFlowerArt{animation:none}.wgRowsOpening,.wgRowsClosing{animation:none}.wgBranch{transition:none};
+}
+
+/* Animated disclosure body (RowGroup): 0fr ↔ 1fr interpolates the row box
+   without measuring heights. The inner element must shrink during the +row
+   collapse, and overflow is only clipped while a class is present so idle
+   hover halos and focus rings are never cut off. */
+.wgRows {
+  display:grid;
+  grid-template-rows:1fr;
+}
+
+.wgRowsInner {
+  min-height:0;
+}
+
+.wgRowsOpening {
+  animation:wg-rows-in .18s cubic-bezier(.2,.8,.2,1);
+}
+
+.wgRowsClosing {
+  pointer-events:none;
+  animation:wg-rows-out .16s cubic-bezier(.4,0,1,1) forwards;
+}
+
+.wgRowsOpening .wgRowsInner,.wgRowsClosing .wgRowsInner {
+  overflow:hidden;
+}
+
+@keyframes wg-rows-in {
+  0%{grid-template-rows:0fr;opacity:.35}
+  to{grid-template-rows:1fr;opacity:1}
+}
+
+@keyframes wg-rows-out {
+  0%{grid-template-rows:1fr;opacity:1}
+  to{grid-template-rows:0fr;opacity:0}
 }
 
 .wgTreeChildren {
@@ -469,6 +547,85 @@
 
 .wgRenameInput:focus {
   border-color:var(--dsw-accent,#4a90d9);
+}
+
+/* Appearance dialog: colour swatches, icon picker grid, pin toggle. */
+.wgAppearanceSection {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.wgAppearanceLabel {
+  color:var(--dsw-fg-3,#7f7f7fcc);
+  font-size:11px;
+  font-weight:600;
+}
+
+.wgSwatchRow {
+  gap:6px;
+  display:flex;
+  flex-wrap:wrap;
+}
+
+.wgSwatch {
+  cursor:pointer;
+  border:1px solid var(--dsw-alias-border-l2,#7f7f7f47);
+  width:20px;
+  height:20px;
+  border-radius:5px;
+  padding:0;
+}
+
+.wgSwatch[data-wg-color] {
+  background:var(--wg-group-tint);
+}
+
+.wgSwatch:disabled {
+  cursor:default;
+  opacity:.5;
+}
+
+.wgSwatchActive {
+  outline:2px solid var(--dsw-accent,#4a90d9);
+  outline-offset:1px;
+}
+
+.wgSwatchDefault {
+  background:var(--dsw-bg-hover,#7f7f7f1f);
+}
+
+.wgIconGrid {
+  gap:4px;
+  grid-template-columns:repeat(10,1fr);
+  display:grid;
+}
+
+.wgIconCell {
+  cursor:pointer;
+  color:var(--dsw-fg-2,inherit);
+  border:0;
+  border-radius:5px;
+  justify-content:center;
+  align-items:center;
+  width:24px;
+  height:24px;
+  padding:0;
+  display:inline-flex;
+  background:transparent;
+}
+
+.wgIconCell:hover:not(:disabled) {
+  background:var(--dsw-bg-hover,#7f7f7f1f);
+}
+
+.wgIconCell[aria-pressed=true] {
+  background:var(--dsw-bg-selected,#4a90d92e);
+}
+
+.wgIconCell:disabled {
+  cursor:default;
+  opacity:.5;
 }
 
 .wgQuickOverlay {
@@ -845,4 +1002,111 @@
 
 .wgTabClose:hover {
   background:var(--dsw-alias-interactive-bg-hover-solid,#7f7f7f33);
+}
+
+/* ---- tab strip: pin / drag / inline rename / context menu ------------------ */
+
+.wgTab {
+  position:relative;
+}
+
+.wgTabPinned {
+  box-shadow:inset 0 0 0 1px var(--dsw-alias-label-secondary,#7f7f7f73);
+}
+
+.wgTabPin {
+  flex:none;
+  justify-content:center;
+  align-items:center;
+  width:12px;
+  height:12px;
+  margin-left:4px;
+  opacity:.55;
+  color:inherit;
+  display:inline-flex;
+}
+
+.wgTabDragging {
+  opacity:.42;
+}
+
+.wgTabDropBefore:before,.wgTabDropAfter:before {
+  content:"";
+  position:absolute;
+  top:2px;
+  bottom:2px;
+  background:var(--dsw-alias-label-primary,var(--dsw-fg-1,#4a90d9));
+  border-radius:2px;
+  width:2px;
+}
+
+.wgTabDropBefore:before {
+  left:-4px;
+}
+
+.wgTabDropAfter:before {
+  right:-4px;
+}
+
+.wgTabRename {
+  box-sizing:border-box;
+  min-width:88px;
+  height:100%;
+  color:inherit;
+  background:var(--dsw-alias-bg-elevated,var(--dsw-bg-1,transparent));
+  border:1px solid var(--dsw-alias-label-secondary,#7f7f7f73);
+  border-radius:6px;
+  outline:none;
+  flex:auto;
+  margin:2px 0;
+  padding:0 6px;
+  font-family:inherit;
+  font-size:12px;
+}
+
+.wgTabMenu {
+  z-index:2147483000;
+  box-sizing:border-box;
+  min-width:196px;
+  background:var(--dsw-alias-bg-popup,var(--dsw-bg-2,#1e1e1e));
+  border:1px solid var(--dsw-alias-border-l2,#7f7f7f33);
+  border-radius:8px;
+  flex-direction:column;
+  padding:4px;
+  display:flex;
+  position:fixed;
+  box-shadow:0 8px 24px #00000033,0 1px 2px #0000001f;
+}
+
+.wgTabMenuItem {
+  width:100%;
+  color:var(--dsw-alias-label-primary,var(--dsw-fg-1,inherit));
+  text-align:left;
+  cursor:pointer;
+  background:0 0;
+  border:none;
+  border-radius:5px;
+  padding:6px 10px;
+  font-family:inherit;
+  font-size:12px;
+  line-height:16px;
+}
+
+.wgTabMenuItem:hover:not(:disabled) {
+  background:var(--dsw-alias-interactive-bg-hover,var(--dsw-bg-hover,#7f7f7f1f));
+}
+
+.wgTabMenuItem:disabled {
+  cursor:default;
+  opacity:.4;
+}
+
+.wgTabMenuDanger {
+  color:var(--dsw-alias-label-error,var(--dsw-fg-error,#d9534f));
+}
+
+.wgTabMenuSeparator {
+  background:var(--dsw-alias-border-l2,#7f7f7f33);
+  height:1px;
+  margin:4px 6px;
 }

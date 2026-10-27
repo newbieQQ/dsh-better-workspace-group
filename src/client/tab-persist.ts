@@ -25,6 +25,30 @@ export const TABS_ROUTE = '/workspace-groups/tabs'
 export interface WireTab {
   readonly sessionId: string
   readonly order: number
+  /** Pinned tabs are restored at the front of the strip. */
+  readonly pinned?: boolean
+  /** A label the user typed for the tab itself (absent = follow the session). */
+  readonly title?: string
+}
+
+/**
+ * Read one tab row off the wire, dropping the row when it is unusable.
+ * @param entry - one element of the stored `tabs` array.
+ * @returns the tab, or null for a malformed row.
+ */
+function parseWireTab(entry: unknown): WireTab | null {
+  if (typeof entry !== 'object' || entry === null) return null
+  const row = entry as Record<string, unknown>
+  if (typeof row.sessionId !== 'string' || row.sessionId === '') return null
+  if (typeof row.order !== 'number' || !Number.isFinite(row.order)) return null
+  const pinned = row.pinned === true
+  const title = typeof row.title === 'string' && row.title.trim() !== '' ? row.title.trim() : undefined
+  return {
+    sessionId: row.sessionId,
+    order: row.order,
+    ...(pinned ? { pinned: true } : {}),
+    ...(title !== undefined ? { title } : {}),
+  }
 }
 
 /**
@@ -46,11 +70,8 @@ export async function loadTabs(fetchImpl: typeof fetch = fetch): Promise<WireTab
     if (!Array.isArray(list)) return []
     const tabs: WireTab[] = []
     for (const entry of list) {
-      if (typeof entry !== 'object' || entry === null) continue
-      const row = entry as Record<string, unknown>
-      if (typeof row.sessionId !== 'string' || row.sessionId === '') continue
-      if (typeof row.order !== 'number' || !Number.isFinite(row.order)) continue
-      tabs.push({ sessionId: row.sessionId, order: row.order })
+      const tab = parseWireTab(entry)
+      if (tab !== null) tabs.push(tab)
     }
     return tabs
   } catch {

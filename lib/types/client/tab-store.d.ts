@@ -18,7 +18,7 @@
  */
 import { type EngineStoreHandle, type StoreHandle } from '@deepseek-ai/dsh-client-store';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
-import { closeTabImpl, restoreTabsImpl, touchTabImpl, type SessionTab, type SessionTabsState } from './tabs.ts';
+import { closeAfterImpl, closeOthersImpl, closeTabImpl, moveTabImpl, pinTabImpl, renameTabImpl, restoreTabsImpl, touchTabImpl, type SessionTab, type SessionTabsState } from './tabs.ts';
 export type { SessionTabsState };
 /**
  * Session-tab strip actions (bound by the framework, handed to the browser).
@@ -43,12 +43,27 @@ export interface SessionTabsActions {
      * opened a tab — a slow response must never discard what they just did.
      */
     restore: (tabs: readonly SessionTab[]) => void;
+    /** Pin or unpin one tab (re-inserts it at the block boundary). */
+    pin: (sessionId: SessionId) => void;
+    /** Move one tab to an index in the resulting strip (drag and drop). */
+    move: (sessionId: SessionId, targetIndex: number) => void;
+    /** Set (or clear, with a blank value) one tab's own label. */
+    rename: (sessionId: SessionId, title: string | undefined) => void;
+    /** Close everything except one tab; pinned tabs are kept. */
+    closeOthers: (sessionId: SessionId) => void;
+    /** Close every tab after one in display order. */
+    closeAfter: (sessionId: SessionId) => void;
 }
 /** Annotation twin of the actions literal below (structural `ActionsDecl`). */
 type SessionTabsActionsDecl = {
     touch: typeof touchTabImpl;
     close: typeof closeTabImpl;
     restore: typeof restoreTabsImpl;
+    pin: typeof pinTabImpl;
+    move: typeof moveTabImpl;
+    rename: typeof renameTabImpl;
+    closeOthers: typeof closeOthersImpl;
+    closeAfter: typeof closeAfterImpl;
 };
 /**
  * The tab store's registered handle: identity + spec + the instance factory the

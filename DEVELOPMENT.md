@@ -140,7 +140,19 @@ $installed = "C:\Users\qyh15\.dsh\profiles\desktop\node_modules\@dsh-xhl\workspa
   挂路由 → 客户端照 `tab-persist.ts` 的 `fetch` 封装去调，注意 `Cache-Control: no-store`。
 - **加标签条行为**：状态变换进 `tabs.ts`（纯），store 绑定在 `tab-store.ts`，
   渲染在 `SessionTabs.tsx`，落盘走 `tab-persist.ts`；位置模型是「首次入列时定序」，
-  改动前先读 `tabs.ts` 顶部的 position model 注释。
+  改动前先读 `tabs.ts` 顶部的 position model 注释。两条不变量：**固定标签恒在未固定
+  之前**（`moveTab` 在固定区边界夹紧、`togglePinTab` 插到固定区尾/未固定区头），
+  **标签名与会话标题互不影响**（`renameTab` 只动 `title`）。除 `order` 之外的标签状态
+  （固定、自定义名）也必须由 `restoreTabsImpl` 原样复原，否则每次重启都丢配置。
+- **加一个分组展示元数据（颜色 / 图标 / 置顶等）**：字段进 `types.ts`
+  （`CategoryAppearance` + `GROUP_COLORS`/`GROUP_ICON_IDS` 白名单）→ 校验进
+  `host-manual.ts` 的 `parseAppearance`（**严格写、宽容读**：不校验键对应的分类是否
+  还存在，否则删掉一条 YAML 分类就会让之后每次保存都 400）→ 派生进 `matcher.ts`
+  （要影响排序就必须放 `effectiveCategories`，只在渲染层排会让拖拽落点与看到的顺序
+  不一致）→ `tree.ts` 节点带 `appearance` → `rows.tsx` 渲染 → `styles.css` 配色/
+  动画 → `locales.ts` 双语文案。写路径统一走
+  `GroupsBrowser.tsx` 的 `updateCategoryAppearance`；**改名要重映射 `appearance` 的键、
+  删除要清掉**（键空间是 display name，与 `categoryOrder` 一致）。
 - **新增平台依赖**：先确认 DSH shell 的 module table 真有那一行，再往
   `CLIENT_EXTERNALS` 里加，否则运行时 `require` 会拿不到模块。
 
@@ -149,7 +161,11 @@ $installed = "C:\Users\qyh15\.dsh\profiles\desktop\node_modules\@dsh-xhl\workspa
 - **沙箱内跑不了 vitest**：`spawn` 被 DSH 沙箱拦（EPERM），在普通 PowerShell 终端里跑。
 - **`node_modules/.bin/*.CMD` 直调会挂**：pnpm 里嵌套的 pnpm 脚本在 DSH 沙箱下会
   `Could not determine executable`，统一用 `node <pnpm.cjs> <script>` 形式。
-- **单测语义比源码旧**：`tests/` 是按早期版本写的，0.4.2 的标签条/快切没有覆盖，
-  改到这些区域时补测试。
+- **单测覆盖不齐**：`tests/` 是早期版本写的，现已补 `tests/tabs.test.ts`（标签条纯逻辑：
+  固定区不变量、拖动夹紧、关闭其他/右侧、持久化恢复）；**快切面板
+  （`quick.ts` / `QuickPanel.tsx`）与分组外观仍无单测**，改到这些区域时补。
+- **改持久化格式一律「严格写、宽容读」**：新增字段必须是可选的，旧文件读不进来不算
+  错；悬挂键（如已删除的分类/会话）不得拒写，否则用户会卡在 400 上再也保存不了；
+  新字段在 `restore*` 里必须原样带过去（`pinned`/`title` 漏带就等于重启丢配置）。
 - **package 版本号语义混乱**：仓库 HEAD 里是 `0.1.0`，但提交里写 `feat(v0.7)`；
   重建树统一对齐到安装版的 `0.4.2`。发布前自己定一版号。
