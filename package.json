@@ -1,7 +1,7 @@
 {
   "name": "@dsh-xhl/workspace-groups",
-  "version": "0.5.0",
-  "description": "Complete workspace grouping manager for the DSH web sidebar: 分类 → 项目 → 会话 three-level tree, manual group create/rename/delete, drag-and-drop grouping & ordering with insertion indicator, rule-based auto-classification, tree search, plus the session tab strip seated in the conversation column head. Sidecar YAML + runtime overlay, zero core-storage intrusion.",
+  "version": "0.6.0",
+  "description": "Complete workspace grouping manager for the DSH web sidebar: 分类 → 项目 → 会话 three-level tree with optional per-project folders (multi-root), manual group create/rename/delete, drag-and-drop grouping & ordering with insertion indicator, rule-based auto-classification, tree search, group colour/icon/pin, plus the session tab strip seated in the conversation column head. Sidecar YAML + runtime overlays, zero core-storage intrusion.",
   "keywords": [
     "dsh",
     "deepseek-harness",
