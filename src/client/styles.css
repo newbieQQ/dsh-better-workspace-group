@@ -276,9 +276,13 @@
   white-space:nowrap;
   min-width:0;
   color:var(--dsw-alias-label-primary,var(--dsw-fg-1,inherit));
+  /* Same face and size as the group and session rows: the three levels read as
+     one list whose depth comes from the 16px indent and the weight ramp
+     (600 group / 500 project / 400 session), not from a size jump. The mono
+     face this used to use made project rows look larger and differently spaced
+     than the rows around them. */
   font-size:12px;
-  font-weight:600;
-  font-family:var(--dsw-font-mono,ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-weight:500;
   flex:1;
   overflow:hidden;
 }
@@ -411,7 +415,11 @@
   align-items:center;
   gap:6px;
   height:28px;
-  padding:0 4px 0 40px;
+  /* Nesting step: group label 42 → project label 58 → session title 74, i.e. a
+     uniform 16px per level. The session used to start at 40 (+20 for the status
+     slot = 60), which sat only 2px right of its project label and read as the
+     same level. */
+  padding:0 4px 0 54px;
   display:flex;
 }
 
