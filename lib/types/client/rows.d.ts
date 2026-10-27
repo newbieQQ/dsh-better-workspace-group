@@ -11,7 +11,7 @@
 import { type DragEvent, type ReactNode } from 'react';
 import { type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots';
-import type { CategoryNode, SessionNode, WorkspaceGroupNode } from './tree.ts';
+import type { CategoryNode, FolderNode, SessionNode, WorkspaceGroupNode } from './tree.ts';
 type T = TranslateNS<'workspaceGroups'>;
 /** dataTransfer type carrying the dragged workspace id (in-plugin drags only). */
 export declare const DND_WORKSPACE_TYPE = "application/x-dsh-workspace-groups";
@@ -65,7 +65,7 @@ export declare function CategoryRow({ node, t, onToggle, onRename, onDelete, onT
     onDragStartCategory?: (event: DragEvent) => void;
 } & RowDropProps): import("react").JSX.Element;
 /** One workspace folder row inside a category: draggable source + drop target. */
-export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDelete, canMoveOut, onMoveOut, onOpenInFolder, flat, dropActive, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartExtra }: {
+export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDelete, canMoveOut, onMoveOut, onManageFolders, onOpenInFolder, flat, dropActive, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartExtra }: {
     node: WorkspaceGroupNode;
     t: T;
     onToggle: () => void;
@@ -75,6 +75,8 @@ export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename
     /** Project currently sits inside a group — offer "move out of group". */
     canMoveOut?: boolean;
     onMoveOut?: () => void;
+    /** Open the folder-management dialog (extra folders + root). */
+    onManageFolders?: () => void;
     /**
      * Open the project directory in the host's file manager. Omitted when the
      * host resolved no folder application (no capability, or a remote launch),
@@ -86,6 +88,28 @@ export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename
     /** Extra dragstart hook (e.g. collapse all expanded projects while dragging). */
     onDragStartExtra?: () => void;
 } & RowDropProps): import("react").JSX.Element;
+/**
+ * One folder row under a project: the base directory (folder #0) plus every
+ * extra folder of that workspace. Sits at the session indent level so the
+ * 42/58/74 ladder is preserved, and its own session rows indent one step
+ * deeper (see `.wgSessionNested`).
+ *
+ * Deliberately NOT a drag source or drop target: folders are a fixed,
+ * host-ordered list; reordering them would need a write path this feature does
+ * not have.
+ */
+export declare function FolderRow({ node, t, onToggle, onNewSession, onSetRoot, onRemove, onOpenInFolder, creating }: {
+    node: FolderNode;
+    t: T;
+    onToggle: () => void;
+    onNewSession: () => void;
+    onSetRoot: () => void;
+    onRemove: () => void;
+    /** Absent when the host resolved no folder application. */
+    onOpenInFolder?: () => void;
+    /** A session is being created here: the hover ＋ stays disabled. */
+    creating?: boolean;
+}): import("react").JSX.Element;
 /**
  * Children container for one folder's rows.
  *
@@ -119,7 +143,7 @@ export declare function RowGroup({ expanded, className, animate, children }: {
     children: ReactNode;
 }): JSX.Element | null;
 /** One session leaf row. */
-export declare function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, onArchive }: {
+export declare function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, onArchive, nested }: {
     node: SessionNode;
     currentId: string | undefined;
     now: number;
@@ -128,5 +152,7 @@ export declare function SessionRow({ node, currentId, now, t, onOpen, onRename, 
     onRename: (id: SessionNode['id'], currentTitle: string) => void;
     onFork: (id: SessionNode['id']) => void;
     onArchive: (id: SessionNode['id']) => void;
+    /** Rendered under a folder row: one indent step deeper than a plain session. */
+    nested?: boolean;
 }): import("react").JSX.Element;
 export type { T };

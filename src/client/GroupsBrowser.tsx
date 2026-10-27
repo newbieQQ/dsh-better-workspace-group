@@ -1,7 +1,7 @@
 /**
  * The workspace-groups browsing region filling the sidebar shell's
  * `sidebar.workspaces` hole: section header (title + right-aligned search +
- * new-group + add workspace), the three-level tree (category → workspace →
+ * new-group + add workspace), the three-level tree (category — workspace —
  * session), group management dialogs, and the workspace/session dialogs. Wide
  * state renders the full browser; rail state renders the two region icons
  * (search / add workspace) as 36px controls on the shell's shared rail entry
@@ -21,6 +21,7 @@ import {
   IconFolderOpenOutlineRegular,
   IconProjectAddOutlineRegular,
   IconSearchOutlineRegular,
+  IconTrashOutlineRegular,
   IconWarningOutlineRegular,
   Modal,
   Toast,
@@ -51,9 +52,11 @@ import {
   type ManualGroups,
 } from '../core/types.ts'
 import type { GroupsBrowserProps } from './contract.ts'
-import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, UNCATEGORIZED_KEY, type CategoryNode, type WorkspaceGroupNode } from './tree.ts'
-import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
+import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, UNCATEGORIZED_KEY, type CategoryNode, type WorkspaceGroupNode } from './tree.ts'
+import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
+import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
+import { loadFolders, saveFolders } from './folders-persist.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
@@ -101,7 +104,7 @@ function categoryRowCount(category: CategoryNode): number {
   return category.workspaces.reduce((total, workspace) => total + 1 + (workspace.expanded ? workspace.sessions.length : 0), 0)
 }
 
-/** Palette id → i18n key for the colour picker (keeps literal key types intact). */
+/** Palette id — i18n key for the colour picker (keeps literal key types intact). */
 const COLOR_LABEL_KEYS: Record<GroupColor, WorkspaceGroupsKey> = {
   red: 'color.red',
   orange: 'color.orange',
@@ -205,6 +208,7 @@ export function GroupsBrowser({
   useStore,
   actions,
   startSession,
+  createSessionIn,
   open,
   renameSession,
   forkSession,
@@ -264,6 +268,30 @@ export function GroupsBrowser({
   // Transient save errors for drag/menu group operations (dialog errors are local).
   const [manualError, setManualError] = useState<string | null>(null)
   const [manualSaving, setManualSaving] = useState(false)
+
+  // ---- Per-workspace folders (multi-root) -------------------------------------
+  //
+  // A second host sidecar (`/workspace-groups/folders`) lists each workspace's
+  // extra folders plus the optional root folder. It is read once per mount and
+  // written back whole, like the manual overlay above; a failed write is a
+  // toast rather than a banner because every edit here is a one-off row action.
+  const [foldersDoc, setFoldersDoc] = useState<FoldersDocument>(EMPTY_FOLDERS_DOCUMENT)
+  // Folder collapse is component state, not store state: it is a transient view
+  // of the row list, like the quick panel, so it is deliberately NOT persisted
+  // with the category/workspace expansion keys. Folders start expanded, so
+  // attaching a folder never hides sessions the user could already see.
+  const [collapsedFolderKeys, setCollapsedFolderKeys] = useState<readonly string[]>([])
+  const [foldersTarget, setFoldersTarget] = useState<WorkspaceId | null>(null)
+  const [foldersBusy, setFoldersBusy] = useState(false)
+  const [creatingSessionIn, setCreatingSessionIn] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void loadFolders().then((document) => {
+      if (cancelled) return
+      setFoldersDoc(document)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
@@ -393,16 +421,18 @@ export function GroupsBrowser({
     () => deriveGroups(list, workspaces, archivedSessionIds, config, {
       expandedCategories,
       expandedWorkspaces,
-    }, manual, statuses),
-    [list, workspaces, archivedSessionIds, config, manual, statuses, expandedCategories, expandedWorkspaces],
+      collapsedFolders: collapsedFolderKeys,
+    }, manual, statuses, foldersDoc),
+    [list, workspaces, archivedSessionIds, config, manual, statuses, expandedCategories, expandedWorkspaces, collapsedFolderKeys, foldersDoc],
   )
   // Top-level (ungrouped) workspace rows, rendered after the group folders.
   const topLevel = useMemo(
     () => deriveTopLevel(list, workspaces, archivedSessionIds, config, {
       expandedCategories,
       expandedWorkspaces,
-    }, manual, statuses),
-    [list, workspaces, archivedSessionIds, config, manual, statuses, expandedCategories, expandedWorkspaces],
+      collapsedFolders: collapsedFolderKeys,
+    }, manual, statuses, foldersDoc),
+    [list, workspaces, archivedSessionIds, config, manual, statuses, expandedCategories, expandedWorkspaces, collapsedFolderKeys, foldersDoc],
   )
   // Quick panel (Ctrl+R): category label per grouped workspace id (the tree
   // derivation already resolved grouping; top-level workspaces stay absent).
@@ -548,6 +578,108 @@ export function GroupsBrowser({
         })
       }
 
+  // ---- Folder overlay editing -------------------------------------------------
+
+  const notifyFolder = (text: string): void => {
+    setFolderError({ id: Date.now(), text })
+  }
+
+  const persistFolders = (next: FoldersDocument): void => {
+    setFoldersDoc(next)
+    saveFolders(next).catch((reason: unknown) => {
+      const detail = reason instanceof Error ? reason.message : String(reason)
+      notifyFolder(`${t('folder.saveError')}: ${detail}`)
+    })
+  }
+
+  /** Write one workspace's entry; zero extra folders removes the key entirely. */
+  const writeFolderEntry = (workspaceId: WorkspaceId, entry: WorkspaceFolderEntry): void => {
+    const next: Record<string, WorkspaceFolderEntry> = { ...foldersDoc.workspaces }
+    const key = workspaceId as string
+    if (entry.folders.length === 0) delete next[key]
+    else next[key] = entry
+    persistFolders({ version: 1, workspaces: next })
+  }
+
+  const toggleFolder = (workspaceId: WorkspaceId, path: string): void => {
+    const key = folderKey(workspaceId, path)
+    setCollapsedFolderKeys(keys => (keys.includes(key) ? keys.filter(k => k !== key) : [...keys, key]))
+  }
+
+  const addFolderTo = async (workspaceId: WorkspaceId): Promise<void> => {
+    if (foldersBusy) return
+    const workspace = workspaces.find(w => w.workspaceId === workspaceId)
+    if (workspace === undefined) return
+    setFoldersBusy(true)
+    try {
+      const path = await pickDirectory()
+      if (path === null) return // cancelled
+      const entry = entryFor(foldersDoc, workspaceId as string)
+      if (effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))) {
+        notifyFolder(t('folder.duplicate'))
+        return
+      }
+      writeFolderEntry(workspaceId, addFolder(entry, path))
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : String(reason)
+      notifyFolder(`${t('folder.addError')}: ${detail}`)
+    } finally {
+      setFoldersBusy(false)
+    }
+  }
+
+  const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {
+    writeFolderEntry(workspaceId, setRoot(entryFor(foldersDoc, workspaceId as string), path))
+  }
+
+  const removeFolderFrom = (workspaceId: WorkspaceId, path: string): void => {
+    writeFolderEntry(workspaceId, removeFolder(entryFor(foldersDoc, workspaceId as string), path))
+  }
+
+  /**
+   * "New session here": an extra folder's own directory becomes the Session cwd.
+   * The base folder keeps the platform's own gesture instead, because that one
+   * reuses the blank session it already opened; creating a fresh Session on
+   * every click would pile up empty sessions. One creation in flight at a time;
+   * a rejection surfaces the failure and creates nothing else.
+   */
+  const startSessionInFolder = (workspaceId: WorkspaceId, path: string, isBase: boolean): void => {
+    if (isBase) {
+      startSession(workspaceId)
+      return
+    }
+    if (creatingSessionIn !== null) return
+    setCreatingSessionIn(folderKey(workspaceId, path))
+    createSessionIn(workspaceId, path).catch((reason: unknown) => {
+      const detail = reason instanceof Error ? reason.message : String(reason)
+      notifyFolder(`${t('folder.sessionError')}: ${detail}`)
+    }).finally(() => {
+      setCreatingSessionIn(null)
+    })
+  }
+
+  /** A project row's plus button — starts in that workspace's root folder. */
+  const startSessionAtRoot = (workspaceId?: WorkspaceId): void => {
+    const workspace = workspaceId === undefined ? undefined : workspaces.find(w => w.workspaceId === workspaceId)
+    if (workspace === undefined) {
+      startSession(workspaceId)
+      return
+    }
+    const root = rootOf(workspace.path, entryFor(foldersDoc, workspaceId as string))
+    startSessionInFolder(workspaceId as WorkspaceId, root, samePath(root, workspace.path))
+  }
+
+  // Absent when the host offers no folder application: folder rows then drop
+  // their "open folder" entry instead of failing at the click.
+  const openFolderPath = folderApp === undefined
+    ? undefined
+    : (path: string): void => {
+        openPathInApp(folderApp, path).catch((reason: unknown) => {
+          const detail = reason instanceof Error ? reason.message : String(reason)
+          notifyFolder(`${t('workspace.openInFolderError')}: ${detail}`)
+        })
+      }
+
   // ---- Runtime group management ----------------------------------------------
 
   const [groupDialog, setGroupDialog] = useState<GroupDialogState>(null)
@@ -634,7 +766,7 @@ export function GroupsBrowser({
     const name = groupDeleteTarget
     const originalRule = originalRuleNameForDisplay(config.categories, manual, name)
 
-    // Every project currently in the group goes to 未分类 (forced, not rule-
+    // Every project currently in the group goes to the uncategorized bucket (forced, not rule-
     // reclassified), regardless of how it landed there.
     const assignments = { ...manual.assignments }
     for (const workspace of workspaces) {
@@ -681,7 +813,7 @@ export function GroupsBrowser({
   const [dragIndicator, setDragIndicator] = useState<DragIndicator>(null)
 
   // Expansion state taken at dragstart; dragend restores it so the folding
-  // caused by a drag is always undone afterwards ("结束后恢复").
+  // caused by a drag is always undone afterwards.
   const expansionSnapshot = useRef<{ categories: Record<string, boolean>; workspaces: Record<string, boolean> } | null>(null)
   // Live expansion state for the dragend restore (the document-level listener
   // is registered once, so it must read current values through a ref).
@@ -760,7 +892,7 @@ export function GroupsBrowser({
     }
   }
 
-  /** Reorder groups: move `draggedKey` before `beforeKey` or after `afterKey` (未分类 target = append). */
+  /** Reorder groups: move `draggedKey` before `beforeKey` or after `afterKey` (no target = append). */
   const moveCategory = async (draggedKey: string, beforeKey?: string, afterKey?: string): Promise<void> => {
     if (manualSaving || draggedKey === beforeKey || draggedKey === afterKey) return
     setManualSaving(true)
@@ -929,9 +1061,9 @@ export function GroupsBrowser({
   }
 
   /**
-   * Drag over the TOP-LEVEL AREA's blank space (not on a row — rows stop
-   * propagation). An insertion line shows the landing spot: empty top level →
-   * a standalone line under the last group; non-empty → a line below the last
+   * Drag over the TOP-LEVEL AREA's blank space (not on a row ???rows stop
+   * propagation). An insertion line shows the landing spot: empty top level —
+   * a standalone line under the last group; non-empty — a line below the last
    * top-level row (end of the list).
    */
   const onDragOverTopLevelArea = (event: DragEvent): void => {
@@ -1111,6 +1243,7 @@ export function GroupsBrowser({
             now={now}
             open={open}
             manual={manual}
+            folders={foldersDoc}
             t={t}
           />
         ) : (
@@ -1139,8 +1272,15 @@ export function GroupsBrowser({
                 onDragStartWorkspace={onDragStartWorkspace}
                 onToggleCategory={() => { actions.setCategoryExpanded(category.key, !category.expanded) }}
                 onToggleWorkspace={(key) => { actions.setWorkspaceExpanded(key, !workspaceExpansion[key]) }}
-                onNewSession={startSession}
+                onNewSession={startSessionAtRoot}
                 onOpen={open}
+                onToggleFolder={toggleFolder}
+                onFolderNewSession={startSessionInFolder}
+                onFolderSetRoot={setFolderRoot}
+                onFolderRemove={removeFolderFrom}
+                onOpenFolderPath={openFolderPath}
+                onManageFolders={(workspaceId) => { setFoldersTarget(workspaceId) }}
+                creatingFolderKey={creatingSessionIn}
                 onRenameRequest={(workspaceId, title) => {
                   setRenameTarget({ workspaceId, currentTitle: title })
                   setRenameDraft(title)
@@ -1172,7 +1312,7 @@ export function GroupsBrowser({
                 onMoveOut={(workspaceId) => { void moveWorkspaceTo(workspaceId, UNCATEGORIZED_KEY) }}
                 onOpenInFolder={openInFolder}
                 canMoveOut={(workspaceId) => {
-                  // The menu "移出分组" is offered for any project that
+                  // The menu "Move out of group" is offered for any project that
                   // currently sits inside a group (rule-classified or manual) —
                   // not just overridden ones. Top-level projects
                   // (resolveCategory === undefined) don't need it.
@@ -1201,8 +1341,15 @@ export function GroupsBrowser({
                 onDropRow={onDropRow}
                 onDragStartWorkspace={onDragStartWorkspace}
                 onToggleWorkspace={(key) => { actions.setWorkspaceExpanded(key, !workspaceExpansion[key]) }}
-                onNewSession={startSession}
+                onNewSession={startSessionAtRoot}
                 onOpen={open}
+                onToggleFolder={toggleFolder}
+                onFolderNewSession={startSessionInFolder}
+                onFolderSetRoot={setFolderRoot}
+                onFolderRemove={removeFolderFrom}
+                onOpenFolderPath={openFolderPath}
+                onManageFolders={(workspaceId) => { setFoldersTarget(workspaceId) }}
+                creatingFolderKey={creatingSessionIn}
                 onRenameRequest={(workspaceId, title) => {
                   setRenameTarget({ workspaceId, currentTitle: title })
                   setRenameDraft(title)
@@ -1371,6 +1518,27 @@ export function GroupsBrowser({
         )}
       </Modal>
 
+      {/* Per-workspace folders dialog: base + extra folders, root radio,
+          open/remove per row. Mounted only while a project row asked for it. */}
+      {foldersTarget !== null && (() => {
+        const workspace = workspaces.find(w => w.workspaceId === foldersTarget)
+        if (workspace === undefined) return null
+        return (
+          <FoldersDialog
+            workspace={workspace}
+            entry={entryFor(foldersDoc, foldersTarget as string)}
+            t={t}
+            busy={foldersBusy}
+            canOpen={openFolderPath !== undefined}
+            onClose={() => { setFoldersTarget(null) }}
+            onAdd={() => { void addFolderTo(foldersTarget) }}
+            onSetRoot={(path) => { setFolderRoot(foldersTarget, path) }}
+            onRemove={(path) => { removeFolderFrom(foldersTarget, path) }}
+            onOpenFolder={(path) => { openFolderPath?.(path) }}
+          />
+        )
+      })()}
+
       {/* Workspace rename dialog */}
       <Modal
         open={renameTarget !== null}
@@ -1494,8 +1662,104 @@ function categoriesForCurrent(
   return resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title)
 }
 
+/**
+ * The expanded session rows of one project. Workspaces with extra folders get
+ * one folder row per folder (root first) and hang their sessions off that
+ * folder; a workspace without extra folders renders today's flat list, so the
+ * common case is unchanged row-for-row.
+ */
+function WorkspaceSubtree({ workspace, current, now, t, animate, onOpen, onSessionRename, onSessionArchive, onFork, onToggleFolder, onFolderNewSession, onFolderSetRoot, onFolderRemove, onOpenFolderPath, creatingFolderKey }: {
+  workspace: WorkspaceGroupNode
+  current: SessionId | undefined
+  now: number
+  t: GroupsBrowserProps['t']
+  animate: boolean
+  onOpen: (sessionId: SessionId) => void
+  onSessionRename: (sessionId: SessionId, currentTitle: string) => void
+  onSessionArchive: (sessionId: SessionId) => void
+  onFork: (sessionId: SessionId) => void
+  onToggleFolder: (workspaceId: WorkspaceId, path: string) => void
+  onFolderNewSession: (workspaceId: WorkspaceId, path: string, isBase: boolean) => void
+  onFolderSetRoot: (workspaceId: WorkspaceId, path: string) => void
+  onFolderRemove: (workspaceId: WorkspaceId, path: string) => void
+  onOpenFolderPath?: ((path: string) => void) | undefined
+  creatingFolderKey: string | null
+}) {
+  const folders = workspace.folders
+  if (folders === undefined) {
+    return (
+      <RowGroup
+        expanded={workspace.expanded}
+        className="wgTreeChildren"
+        animate={animate && workspace.sessions.length <= ANIMATION_ROW_CAP}
+      >
+        {workspace.sessions.map((session) => (
+          <SessionRow
+            key={session.id}
+            node={session}
+            currentId={current}
+            now={now}
+            t={t}
+            onOpen={onOpen}
+            onRename={onSessionRename}
+            onFork={onFork}
+            onArchive={onSessionArchive}
+          />
+        ))}
+      </RowGroup>
+    )
+  }
+  return (
+    <RowGroup
+      expanded={workspace.expanded}
+      className="wgTreeChildren"
+      animate={animate && folders.length + workspace.sessions.length <= ANIMATION_ROW_CAP}
+    >
+      {folders.map((folder) => {
+        const key = folderKey(workspace.workspaceId, folder.path)
+        return (
+          <div key={key} role="group">
+            <FolderRow
+              node={folder}
+              t={t}
+              creating={creatingFolderKey === key}
+              onToggle={() => { onToggleFolder(workspace.workspaceId, folder.path) }}
+              onNewSession={() => { onFolderNewSession(workspace.workspaceId, folder.path, folder.isBase) }}
+              onSetRoot={() => { onFolderSetRoot(workspace.workspaceId, folder.path) }}
+              onRemove={() => { onFolderRemove(workspace.workspaceId, folder.path) }}
+              {...(onOpenFolderPath !== undefined
+                ? { onOpenInFolder: () => { onOpenFolderPath(folder.path) } }
+                : {})}
+            />
+            <RowGroup
+              expanded={folder.expanded}
+              className="wgTreeChildren"
+              animate={animate && folder.sessions.length <= ANIMATION_ROW_CAP}
+            >
+              {folder.sessions.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  node={session}
+                  nested
+                  currentId={current}
+                  now={now}
+                  t={t}
+                  onOpen={onOpen}
+                  onRename={onSessionRename}
+                  onFork={onFork}
+                  onArchive={onSessionArchive}
+                />
+              ))}
+            </RowGroup>
+          </div>
+        )
+      })}
+    </RowGroup>
+  )
+}
+
 /** One category section: header row + expanded workspace folders. */
-function CategorySection({ category, current, now, t, dragIndicator, onDragOverRow, onDragLeaveRow, onDropRow, onDragStartCategory, onDragStartWorkspace, onToggleCategory, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onGroupRename, onGroupDelete, onGroupTogglePin, onGroupAppearance, animate, onMoveOut, canMoveOut, onOpenInFolder }: {
+function CategorySection({ category, current, now, t, dragIndicator, onDragOverRow, onDragLeaveRow, onDropRow, onDragStartCategory, onDragStartWorkspace, onToggleCategory, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onGroupRename, onGroupDelete, onGroupTogglePin, onGroupAppearance, animate, onMoveOut, canMoveOut, onOpenInFolder, onToggleFolder, onFolderNewSession, onFolderSetRoot, onFolderRemove, onOpenFolderPath, onManageFolders, creatingFolderKey }: {
   category: CategoryNode
   current: SessionId | undefined
   now: number
@@ -1526,8 +1790,17 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
   onGroupAppearance: () => void
   onMoveOut: (workspaceId: WorkspaceId) => void
   canMoveOut: (workspaceId: WorkspaceId) => boolean
+  onToggleFolder: (workspaceId: WorkspaceId, path: string) => void
+  onFolderNewSession: (workspaceId: WorkspaceId, path: string, isBase: boolean) => void
+  onFolderSetRoot: (workspaceId: WorkspaceId, path: string) => void
+  onFolderRemove: (workspaceId: WorkspaceId, path: string) => void
+  onManageFolders: (workspaceId: WorkspaceId) => void
+  /** Creation in flight, keyed by `folderKey`; disables the row's controls */
+  creatingFolderKey: string | null
   /** Absent when the host resolved no folder application. */
   onOpenInFolder?: ((workspaceId: WorkspaceId) => void) | undefined
+  /** Absent when the host resolved no folder application. */
+  onOpenFolderPath?: ((path: string) => void) | undefined
 }) {
   const categoryLine = dragIndicator?.mode === 'line' && dragIndicator.row.kind === 'category' && dragIndicator.row.key === category.key
     ? (dragIndicator.before ? 'before' : 'after')
@@ -1577,26 +1850,25 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
               onRowDragLeave={onDragLeaveRow}
               onRowDrop={onDropRow(category.key, { kind: 'workspace', key: workspace.workspaceId })}
               onDragStartExtra={onDragStartWorkspace(workspace.workspaceId)}
+              onManageFolders={() => { onManageFolders(workspace.workspaceId) }}
             />
-            <RowGroup
-              expanded={workspace.expanded}
-              className="wgTreeChildren"
-              animate={animate && workspace.sessions.length <= ANIMATION_ROW_CAP}
-            >
-              {workspace.sessions.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  node={session}
-                  currentId={current}
-                  now={now}
-                  t={t}
-                  onOpen={onOpen}
-                  onRename={onSessionRename}
-                  onFork={onFork}
-                  onArchive={onSessionArchive}
-                />
-              ))}
-            </RowGroup>
+            <WorkspaceSubtree
+              workspace={workspace}
+              current={current}
+              now={now}
+              t={t}
+              animate={animate}
+              onOpen={onOpen}
+              onSessionRename={onSessionRename}
+              onSessionArchive={onSessionArchive}
+              onFork={onFork}
+              onToggleFolder={onToggleFolder}
+              onFolderNewSession={onFolderNewSession}
+              onFolderSetRoot={onFolderSetRoot}
+              onFolderRemove={onFolderRemove}
+              onOpenFolderPath={onOpenFolderPath}
+              creatingFolderKey={creatingFolderKey}
+            />
           </div>
         ))}
       </RowGroup>
@@ -1613,7 +1885,7 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
  *   last row);
  * - an empty top level shows a standalone line under the last group folder.
  */
-function TopLevelSection({ topLevel, current, now, t, dragging, dragIndicator, topLevelRef, onDragOverRow, onDragOverTopLevelArea, onDragLeaveRow, onDropRow, onDragStartWorkspace, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onOpenInFolder }: {
+function TopLevelSection({ topLevel, current, now, t, dragging, dragIndicator, topLevelRef, onDragOverRow, onDragOverTopLevelArea, onDragLeaveRow, onDropRow, onDragStartWorkspace, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onOpenInFolder, onToggleFolder, onFolderNewSession, onFolderSetRoot, onFolderRemove, onOpenFolderPath, onManageFolders, creatingFolderKey }: {
   topLevel: readonly WorkspaceGroupNode[]
   current: SessionId | undefined
   now: number
@@ -1635,8 +1907,16 @@ function TopLevelSection({ topLevel, current, now, t, dragging, dragIndicator, t
   onSessionRename: (sessionId: SessionId, currentTitle: string) => void
   onSessionArchive: (sessionId: SessionId) => void
   onFork: (sessionId: SessionId) => void
+  onToggleFolder: (workspaceId: WorkspaceId, path: string) => void
+  onFolderNewSession: (workspaceId: WorkspaceId, path: string, isBase: boolean) => void
+  onFolderSetRoot: (workspaceId: WorkspaceId, path: string) => void
+  onFolderRemove: (workspaceId: WorkspaceId, path: string) => void
+  onManageFolders: (workspaceId: WorkspaceId) => void
+  creatingFolderKey: string | null
   /** Absent when the host resolved no folder application. */
   onOpenInFolder?: ((workspaceId: WorkspaceId) => void) | undefined
+  /** Absent when the host resolved no folder application. */
+  onOpenFolderPath?: ((path: string) => void) | undefined
 }) {
   const emptyLineActive = dragIndicator?.mode === 'line' && dragIndicator.row.kind === 'topLevel' && dragIndicator.row.key === topLevelRef.key
   return (
@@ -1679,26 +1959,91 @@ function TopLevelSection({ topLevel, current, now, t, dragging, dragIndicator, t
             onRowDragLeave={onDragLeaveRow}
             onRowDrop={onDropRow(UNCATEGORIZED_KEY, { kind: 'topLevel', key: workspace.workspaceId })}
             onDragStartExtra={onDragStartWorkspace(workspace.workspaceId)}
+            onManageFolders={() => { onManageFolders(workspace.workspaceId) }}
           />
-          <RowGroup
-            expanded={workspace.expanded}
-            className="wgTreeChildren"
-            animate={!dragging && workspace.sessions.length <= ANIMATION_ROW_CAP}
-          >
-            {workspace.sessions.map((session) => (
+          <WorkspaceSubtree
+            workspace={workspace}
+            current={current}
+            now={now}
+            t={t}
+            animate={!dragging}
+            onOpen={onOpen}
+            onSessionRename={onSessionRename}
+            onSessionArchive={onSessionArchive}
+            onFork={onFork}
+            onToggleFolder={onToggleFolder}
+            onFolderNewSession={onFolderNewSession}
+            onFolderSetRoot={onFolderSetRoot}
+            onFolderRemove={onFolderRemove}
+            onOpenFolderPath={onOpenFolderPath}
+            creatingFolderKey={creatingFolderKey}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Search hits inside one project. When the project owns extra folders the hits
+ * keep their folder row (all expanded, since search prunes to matches) so a
+ * match never loses the folder it came from.
+ */
+function SearchSubtree({ workspace, current, now, open, t }: {
+  workspace: WorkspaceGroupNode
+  current: SessionId | undefined
+  now: number
+  open: (sessionId: SessionId) => void
+  t: GroupsBrowserProps['t']
+}) {
+  const folders = workspace.folders
+  if (folders === undefined) {
+    return (
+      <div role="group">
+        {workspace.sessions.map((session) => (
+          <SessionRow
+            key={session.id}
+            node={session}
+            currentId={current}
+            now={now}
+            t={t}
+            onOpen={open}
+            onRename={() => {}}
+            onFork={() => {}}
+            onArchive={() => {}}
+          />
+        ))}
+      </div>
+    )
+  }
+  return (
+    <div role="group">
+      {folders.map((folder) => (
+        <div key={folderKey(workspace.workspaceId, folder.path)} role="group">
+          <FolderRow
+            node={folder}
+            t={t}
+            onToggle={() => {}}
+            onNewSession={() => {}}
+            onSetRoot={() => {}}
+            onRemove={() => {}}
+          />
+          <div role="group">
+            {folder.sessions.map((session) => (
               <SessionRow
                 key={session.id}
                 node={session}
+                nested
                 currentId={current}
                 now={now}
                 t={t}
-                onOpen={onOpen}
-                onRename={onSessionRename}
-                onFork={onFork}
-                onArchive={onSessionArchive}
+                onOpen={open}
+                onRename={() => {}}
+                onFork={() => {}}
+                onArchive={() => {}}
               />
             ))}
-          </RowGroup>
+          </div>
         </div>
       ))}
     </div>
@@ -1707,10 +2052,10 @@ function TopLevelSection({ topLevel, current, now, t, dragging, dragIndicator, t
 
 /**
  * Search body rendered as a three-level tree pruned to matched branches:
- * 分类文件夹 → 项目文件夹 → 命中会话行. Reuses the same row components as
+ * Only branches that contain a hit are rendered, which keeps a long list short. Reuses the same row components as
  * the idle tree, so search keeps the same folder hierarchy the user is used to.
  */
-function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, query, remote, resultLimit, current, now, open, manual, t }: {
+function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, query, remote, resultLimit, current, now, open, manual, folders, t }: {
   list: SessionListState
   workspaces: readonly WorkspaceView[]
   config: GroupsConfig
@@ -1723,6 +2068,7 @@ function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, qu
   now: number
   open: (sessionId: SessionId) => void
   manual: ManualGroups
+  folders: FoldersDocument
   t: GroupsBrowserProps['t']
 }) {
   const currentRemote = remote.query === query ? remote : { query, status: 'loading' as const, items: [], hasMore: false }
@@ -1731,8 +2077,8 @@ function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, qu
     [list, workspaces, config, query, archivedSessionIds, currentRemote, resultLimit],
   )
   const searchTree = useMemo(
-    () => deriveSearchGroups(list, workspaces, config, matches.matchedIds, archivedSessionIds, manual, matches.snippetsBySession, statuses),
-    [list, workspaces, config, matches, archivedSessionIds, manual, statuses],
+    () => deriveSearchGroups(list, workspaces, config, matches.matchedIds, archivedSessionIds, manual, matches.snippetsBySession, statuses, folders),
+    [list, workspaces, config, matches, archivedSessionIds, manual, statuses, folders],
   )
   const groups = searchTree.categories
   const searchTopLevel = searchTree.topLevel
@@ -1754,21 +2100,7 @@ function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, qu
                   onRename={() => {}}
                   onDelete={() => {}}
                 />
-                <div role="group">
-                  {workspace.sessions.map((session) => (
-                    <SessionRow
-                      key={session.id}
-                      node={session}
-                      currentId={current}
-                      now={now}
-                      t={t}
-                      onOpen={open}
-                      onRename={() => {}}
-                      onFork={() => {}}
-                      onArchive={() => {}}
-                    />
-                  ))}
-                </div>
+                <SearchSubtree workspace={workspace} current={current} now={now} open={open} t={t} />
               </div>
             ))}
           </div>
@@ -1785,21 +2117,7 @@ function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, qu
             onRename={() => {}}
             onDelete={() => {}}
           />
-          <div role="group">
-            {workspace.sessions.map((session) => (
-              <SessionRow
-                key={session.id}
-                node={session}
-                currentId={current}
-                now={now}
-                t={t}
-                onOpen={open}
-                onRename={() => {}}
-                onFork={() => {}}
-                onArchive={() => {}}
-              />
-            ))}
-          </div>
+          <SearchSubtree workspace={workspace} current={current} now={now} open={open} t={t} />
         </div>
       ))}
       {pending && <div className="wgSearchStatus" role="status">{t('search.pending')}</div>}
@@ -1811,5 +2129,86 @@ function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, qu
         <div className="wgSearchStatus">{t('search.hasMore')}</div>
       )}
     </div>
+  )
+}
+
+/**
+ * Folder list dialog for one workspace: the base folder first, then every extra
+ * folder in stored order. The radio column chooses the root (the folder new
+ * sessions default to); open/remove act per row, and removing the base folder is
+ * never offered because the workspace's canonical directory cannot be dropped.
+ */
+function FoldersDialog({ workspace, entry, t, busy, canOpen, onClose, onAdd, onSetRoot, onRemove, onOpenFolder }: {
+  workspace: WorkspaceView
+  entry: WorkspaceFolderEntry | undefined
+  t: GroupsBrowserProps['t']
+  busy: boolean
+  canOpen: boolean
+  onClose: () => void
+  onAdd: () => void
+  onSetRoot: (path: string) => void
+  onRemove: (path: string) => void
+  onOpenFolder: (path: string) => void
+}) {
+  const folders = effectiveFolders(workspace.path, entry)
+  const root = rootOf(workspace.path, entry)
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      closeLabel={t('close')}
+      title={t('folder.title')}
+      footer={(
+        <Button variant="primary" onClick={onClose}>{t('folder.done')}</Button>
+      )}
+    >
+      <div className="wgFolderList" role="list" aria-label={t('folder.listAria')}>
+        {folders.map((path, index) => {
+          const isBase = index === 0
+          const isRoot = samePath(path, root)
+          const label = folderLabel(path)
+          return (
+            <div key={path} className="wgFolderListRow" role="listitem">
+              <input
+                type="radio"
+                className="wgFolderRadio"
+                name="wg-folder-root"
+                checked={isRoot}
+                aria-label={`${t('folder.rootBadge')} ${label}`}
+                onChange={() => { onSetRoot(path) }}
+              />
+              <span className="wgFolderListLabel" title={path}>{label}</span>
+              {isBase && <span className="wgFolderListTag">{t('folder.base')}</span>}
+              {isRoot && <span className="wgFolderListTag">{t('folder.rootBadge')}</span>}
+              <span className="wgFolderListActions">
+                {canOpen && (
+                  <button
+                    type="button"
+                    className="wgIconButton"
+                    aria-label={`${t('workspace.openInFolder')} ${label}`}
+                    onClick={() => { onOpenFolder(path) }}
+                  >
+                    <IconFolderOpenOutlineRegular size={16} />
+                  </button>
+                )}
+                {!isBase && (
+                  <button
+                    type="button"
+                    className="wgIconButton"
+                    aria-label={`${t('folder.remove')} ${label}`}
+                    onClick={() => { onRemove(path) }}
+                  >
+                    <IconTrashOutlineRegular />
+                  </button>
+                )}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="wgFolderListFooter">
+        <Button variant="outline" disabled={busy} onClick={onAdd}>{t('folder.add')}</Button>
+      </div>
+    </Modal>
   )
 }

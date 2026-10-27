@@ -1,0 +1,240 @@
+/**
+ * Folder overlay for @dsh-xhl/workspace-groups: the per-workspace list of
+ * EXTRA folders plus the designated root folder. Stored in a plugin-owned JSON
+ * sidecar (`$DSH_HOME/workspace-groups.folders.json`), next to the manual
+ * grouping overlay, because neither DSH core nor the YAML rule source knows
+ * about folders: core gives a workspace exactly one canonical directory and the
+ * YAML stays the classification source.
+ *
+ * Writes are strict (the browser PUT route validates the whole document before
+ * replacing it, atomically: temp file + fsync + rename) and reads tolerate
+ * hand-edited content (junk entries are dropped instead of thrown), for the
+ * same reason the manual overlay does: a stale or malformed sidecar must never
+ * freeze the tree.
+ */
+import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { homedir } from 'node:os'
+import {
+  EMPTY_FOLDERS_DOCUMENT,
+  samePath,
+  type FoldersDocument,
+  type WorkspaceFolderEntry,
+} from './core/folders.ts'
+
+/** File name of the folder sidecar (also the stable error-text prefix). */
+export const FOLDERS_FILE_NAME = 'workspace-groups.folders.json'
+
+/** Hard limits enforced at the write boundary. */
+export const FOLDERS_PER_WORKSPACE_LIMIT = 32
+export const WORKSPACE_ID_LIMIT = 200
+export const FOLDER_PATH_LIMIT = 1024
+
+/** `C:\…` or `C:/…` — a drive-rooted Windows path. */
+const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/u
+
+/** `\\server\share` — a Windows UNC path. */
+const WINDOWS_UNC = /^\\\\/u
+
+/** `/…` — a POSIX absolute path. */
+const POSIX_ABSOLUTE = /^\//u
+
+/** Default overlay location: `$DSH_HOME/workspace-groups.folders.json`. */
+export function defaultFoldersPath(): string {
+  const home = process.env.DSH_HOME !== undefined && process.env.DSH_HOME !== ''
+    ? process.env.DSH_HOME
+    : resolve(homedir(), '.dsh')
+  return resolve(home, FOLDERS_FILE_NAME)
+}
+
+/**
+ * True when `path` is absolute in the host platform's spelling: a drive
+ * letter or UNC prefix on Windows, a leading slash elsewhere.
+ * @param path - candidate path.
+ */
+export function isAbsoluteFolderPath(path: string): boolean {
+  return process.platform === 'win32'
+    ? WINDOWS_DRIVE.test(path) || WINDOWS_UNC.test(path)
+    : POSIX_ABSOLUTE.test(path)
+}
+
+/** Reject helper carrying the stable file-scoped message prefix. */
+function invalid(detail: string): never {
+  throw new Error(`${FOLDERS_FILE_NAME}: ${detail}`)
+}
+
+/**
+ * Parse one workspace entry.
+ * @param value - raw entry from the document.
+ * @param workspaceId - owning workspace id (used in messages).
+ * @param strict - throw on the first problem, or drop junk and return undefined.
+ * @returns the normalized entry, or undefined when nothing usable remains.
+ */
+function parseFolderEntry(
+  value: unknown,
+  workspaceId: string,
+  strict: boolean,
+): WorkspaceFolderEntry | undefined {
+  const fail = (detail: string): void => {
+    if (strict) invalid(`workspace "${workspaceId}": ${detail}`)
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    fail('entry must be an object')
+    return undefined
+  }
+  const source = value as Record<string, unknown>
+  if (source.folders === undefined) {
+    fail('folders is required')
+    return undefined
+  }
+  if (!Array.isArray(source.folders)) {
+    fail('folders must be a list')
+    return undefined
+  }
+  if (strict && source.folders.length > FOLDERS_PER_WORKSPACE_LIMIT) {
+    invalid(`workspace "${workspaceId}": at most ${FOLDERS_PER_WORKSPACE_LIMIT} folders`)
+  }
+
+  const folders: string[] = []
+  for (const candidate of source.folders) {
+    if (typeof candidate !== 'string') {
+      fail('folder paths must be strings')
+      continue
+    }
+    const path = candidate.trim()
+    if (path === '') {
+      fail('folder paths must be non-empty')
+      continue
+    }
+    if (path.includes('\u0000')) {
+      fail(`folder path "${path}" contains a NUL character`)
+      continue
+    }
+    if (path.length > FOLDER_PATH_LIMIT) {
+      fail(`folder path exceeds ${FOLDER_PATH_LIMIT} characters`)
+      continue
+    }
+    if (!isAbsoluteFolderPath(path)) {
+      fail(`folder path "${path}" must be absolute`)
+      continue
+    }
+    if (folders.some(existing => samePath(existing, path))) {
+      fail(`duplicate folder path "${path}"`)
+      continue
+    }
+    if (folders.length >= FOLDERS_PER_WORKSPACE_LIMIT) {
+      fail(`at most ${FOLDERS_PER_WORKSPACE_LIMIT} folders`)
+      break
+    }
+    folders.push(path)
+  }
+
+  let root: string | undefined
+  if (source.root !== undefined) {
+    if (typeof source.root !== 'string') {
+      fail('root must be a string')
+    } else {
+      const candidate = source.root.trim()
+      const member = folders.find(folder => samePath(folder, candidate))
+      if (member === undefined) fail(`root "${candidate}" must name one of folders`)
+      else root = member
+    }
+  }
+
+  if (folders.length === 0 && root === undefined) return undefined
+  return { folders, ...(root === undefined ? {} : { root }) }
+}
+
+/**
+ * Tolerant reader: shape-normalizes whatever was on disk and drops unusable
+ * workspaces, folders and roots instead of throwing. A missing, non-mapping or
+ * unknown-version document yields the empty document.
+ * @param raw - parsed JSON value.
+ */
+export function parseFoldersDocument(raw: unknown): FoldersDocument {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return EMPTY_FOLDERS_DOCUMENT
+  const source = raw as Record<string, unknown>
+  if (source.version !== 1) return EMPTY_FOLDERS_DOCUMENT
+  if (typeof source.workspaces !== 'object' || source.workspaces === null || Array.isArray(source.workspaces)) {
+    return { version: 1, workspaces: {} }
+  }
+  const workspaces: Record<string, WorkspaceFolderEntry> = {}
+  for (const [workspaceId, value] of Object.entries(source.workspaces)) {
+    if (workspaceId.trim() === '' || workspaceId.length > WORKSPACE_ID_LIMIT) continue
+    const entry = parseFolderEntry(value, workspaceId, false)
+    if (entry !== undefined) workspaces[workspaceId] = entry
+  }
+  return { version: 1, workspaces }
+}
+
+/**
+ * Strict writer-side validation. Every rule is enforced and the first problem
+ * throws, so the PUT route rejects instead of persisting a half-valid file.
+ * @param raw - parsed JSON value from the request body.
+ * @returns the normalized document to save.
+ * @throws when version, workspace ids, folder paths, duplicates or the root
+ * membership are wrong.
+ */
+export function validateFoldersDocument(raw: unknown): FoldersDocument {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    invalid('top-level value must be a mapping')
+  }
+  const source = raw as Record<string, unknown>
+  if (source.version !== 1) invalid('version must be 1')
+  if (typeof source.workspaces !== 'object' || source.workspaces === null || Array.isArray(source.workspaces)) {
+    invalid('workspaces must be a mapping')
+  }
+  const workspaces: Record<string, WorkspaceFolderEntry> = {}
+  for (const [workspaceId, value] of Object.entries(source.workspaces)) {
+    if (workspaceId.trim() === '' || workspaceId.length > WORKSPACE_ID_LIMIT) {
+      invalid(`workspace ids must be non-empty strings of at most ${WORKSPACE_ID_LIMIT} characters`)
+    }
+    const entry = parseFolderEntry(value, workspaceId, true)
+    if (entry !== undefined) workspaces[workspaceId] = entry
+  }
+  return { version: 1, workspaces }
+}
+
+/**
+ * Read + tolerate the overlay file. A missing or unreadable file yields the
+ * empty document: folders are a convenience, and a broken sidecar must not take
+ * the tree down with it.
+ * @param path - overlay file path.
+ */
+export async function readFoldersDocument(path: string): Promise<FoldersDocument> {
+  try {
+    const text = await readFile(path, 'utf8')
+    return parseFoldersDocument(JSON.parse(text))
+  } catch {
+    return EMPTY_FOLDERS_DOCUMENT
+  }
+}
+
+/**
+ * Atomically replace the overlay file: write a same-directory temp file,
+ * fsync it, then rename over the target. A crash never leaves a torn JSON at
+ * the real path (readers see either the old or the new file).
+ * @param path - target file path.
+ * @param document - validated document to persist.
+ */
+export async function writeFoldersDocument(path: string, document: FoldersDocument): Promise<void> {
+  const json = `${JSON.stringify(document, null, 2)}\n`
+  await mkdir(dirname(path), { recursive: true })
+  const tmp = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+  const handle = await open(tmp, 'w')
+  try {
+    await handle.writeFile(json, 'utf8')
+    await handle.sync()
+  } catch (error) {
+    await handle.close().catch(() => {})
+    await unlink(tmp).catch(() => {})
+    throw error
+  }
+  await handle.close()
+  try {
+    await rename(tmp, path)
+  } catch (error) {
+    await unlink(tmp).catch(() => {})
+    throw error
+  }
+}

@@ -18,6 +18,16 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { indexSubagentDescendants, type SubagentDescendantSummary } from './subagent-lineage.ts'
 import { categoryAppearance, effectiveCategories, orderedWorkspaceIds, resolveCategory } from '../core/matcher.ts'
 import {
+  EMPTY_FOLDERS_DOCUMENT,
+  effectiveFolders,
+  entryFor,
+  folderOfCwd,
+  rootOf,
+  samePath,
+  type FoldersDocument,
+  type WorkspaceFolderEntry,
+} from '../core/folders.ts'
+import {
   TOP_LEVEL_ORDER_KEY,
   UNCATEGORIZED_LABEL,
   type CategoryAppearance,
@@ -76,6 +86,21 @@ export interface SessionNode {
   snippet?: string
 }
 
+/** One folder row inside a workspace folder (base or extra). */
+export interface FolderNode {
+  /** Absolute folder path. */
+  path: string
+  /** Display label: last path segment, or the whole path for drive roots. */
+  label: string
+  /** The workspace's default target for new sessions (★). */
+  isRoot: boolean
+  expanded: boolean
+  /** The workspace's own canonical directory (folder #0); cannot be removed. */
+  isBase: boolean
+  /** Visible sessions whose recorded cwd lives inside this folder. */
+  sessions: readonly SessionNode[]
+}
+
 /** One workspace folder row inside a category folder. */
 export interface WorkspaceGroupNode {
   workspaceId: WorkspaceId
@@ -85,13 +110,19 @@ export interface WorkspaceGroupNode {
   label: string
   /** Workspace creation time (epoch ms). */
   createdAt: number
-  /** Total visible sessions in the folder. */
+  /** Total visible sessions in the folder (every folder included). */
   sessionCount: number
   expanded: boolean
   /** The folder contains the selected session (active folder tint). */
   containsCurrent: boolean
-  /** Visible session rows (empty while the folder is folded). */
+  /** Base-owned visible session rows (empty while the folder is folded). */
   sessions: readonly SessionNode[]
+  /**
+   * Folder rows, present only when the workspace carries at least one extra
+   * folder: root first, then stored order, base included. Absent means "this
+   * workspace has exactly one directory", the plain pre-folders node shape.
+   */
+  folders?: readonly FolderNode[]
 }
 
 /** One category folder at the top of the tree. */
@@ -113,6 +144,12 @@ export interface CategoryNode {
 export interface GroupsTreeView {
   expandedCategories: readonly string[]
   expandedWorkspaces: readonly string[]
+  /**
+   * Collapsed folder rows, keyed by `folderKey(workspaceId, path)`. Folders are
+   * expanded by default: adding a folder must never hide the sessions that used
+   * to show flat under the project.
+   */
+  collapsedFolders?: readonly string[]
 }
 
 /** Key of the uncategorized bucket (matches the config fallback label). */
@@ -181,6 +218,87 @@ function workspaceSessions(
 }
 
 /**
+ * Display label of one folder: the last path segment. A drive root (`C:\`) or
+ * the POSIX root has no segment, so the whole path is the honest label.
+ * @param path - absolute folder path.
+ */
+export function folderLabel(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/u, '')
+  if (trimmed === '' || /^[A-Za-z]:$/u.test(trimmed)) return path
+  const base = trimmed.split(/[/\\]/u).pop()
+  return base !== undefined && base !== '' ? base : path
+}
+
+/** Stable identity of one folder row (same path may live under two workspaces). */
+export function folderKey(workspaceId: WorkspaceId, path: string): string {
+  return `${workspaceId}\u0000${path}`
+}
+
+/**
+ * Split a workspace's visible sessions between its base directory and its extra
+ * folders. Sessions keep the order they already had inside their owner, and a
+ * workspace with no extra folder returns its sessions untouched — the pre-
+ * folders node shape (no `folders` key at all).
+ * @param workspaceId - owning workspace.
+ * @param workspacePath - canonical directory (folder #0).
+ * @param sessions - every visible session of the workspace, in host order.
+ * @param list - sessions list snapshot (records each session's cwd).
+ * @param entry - saved extra folders + root for this workspace.
+ * @param collapsedFolders - collapsed folder-row keys. Undefined means "nothing
+ * is collapsed", which is both the default view and what search uses so every
+ * hit is visible without another click.
+ */
+function applyFolders(
+  workspaceId: WorkspaceId,
+  workspacePath: string,
+  sessions: readonly SessionNode[],
+  list: SessionListState,
+  entry: WorkspaceFolderEntry | undefined,
+  collapsedFolders: ReadonlySet<string> | undefined,
+): { sessions: readonly SessionNode[]; folders?: readonly FolderNode[] } {
+  const extras = effectiveFolders(workspacePath, entry).slice(1)
+  if (extras.length === 0) return { sessions }
+  const root = rootOf(workspacePath, entry)
+  const base: SessionNode[] = []
+  const byFolder = new Map<string, SessionNode[]>()
+  for (const node of sessions) {
+    const owner = folderOfCwd(list.byId[node.id]?.cwd, workspacePath, entry)
+    if (samePath(owner, workspacePath)) {
+      base.push(node)
+      continue
+    }
+    const bucket = byFolder.get(owner)
+    if (bucket === undefined) byFolder.set(owner, [node])
+    else bucket.push(node)
+  }
+  const folderNode = (path: string, isBase: boolean): FolderNode => {
+    const owned = isBase ? base : (byFolder.get(path) ?? [])
+    return {
+      path,
+      label: folderLabel(path),
+      isRoot: samePath(path, root),
+      expanded: collapsedFolders === undefined || !collapsedFolders.has(folderKey(workspaceId, path)),
+      isBase,
+      // Every owned session is kept on the node so the row's count stays honest
+      // while the folder is collapsed; the RowGroup does the hiding.
+      sessions: owned,
+    }
+  }
+  const folders: FolderNode[] = [
+    folderNode(workspacePath, true),
+    ...extras.map(path => folderNode(path, false)),
+  ]
+  // Root first, then stored order: moving the root row to the front keeps the
+  // remaining rows (base included) in their stored order.
+  const rootIndex = folders.findIndex(folder => folder.isRoot)
+  if (rootIndex > 0) {
+    const [rootFolder] = folders.splice(rootIndex, 1)
+    if (rootFolder !== undefined) folders.unshift(rootFolder)
+  }
+  return { sessions: base, folders }
+}
+
+/**
  * Derive the three-level tree.
  * @param list - sessions list snapshot (`current` feeds containsCurrent).
  * @param workspaces - real workspaces in stable Host order.
@@ -191,6 +309,9 @@ function workspaceSessions(
  * manual override wins over rule classification; removing it reverts to rules.
  * @param statuses - unified UI status by Session (drives the running / warning
  * / unread-completion row indicators); defaults to none (tests).
+ * @param folders - per-workspace extra folders + root. A workspace with extras
+ * gains folder rows and its extra-folder sessions move under them; a workspace
+ * without extras keeps exactly the pre-folders node shape.
  * @returns category sections in render order (rule categories first, then
  * manual-only ones, uncategorized last). Manual groups render even while
  * empty; empty rule buckets stay hidden.
@@ -203,10 +324,12 @@ export function deriveGroups(
   view: GroupsTreeView,
   manual: ManualGroups,
   statuses: SessionStatuses = new Map(),
+  folders: FoldersDocument = EMPTY_FOLDERS_DOCUMENT,
 ): CategoryNode[] {
   const archived = new Set(archivedSessionIds)
   const expandedCategories = new Set(view.expandedCategories)
   const expandedWorkspaces = new Set(view.expandedWorkspaces)
+  const collapsedFolders = new Set(view.collapsedFolders ?? [])
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
 
@@ -245,6 +368,14 @@ export function deriveGroups(
       const sessions = workspaceSessions(list, workspace, archived, descendants, statuses, current)
       const wsExpanded = expandedWorkspaces.has(workspace.workspaceId as string)
       const wsContainsCurrent = workspace.workspaceId === currentWorkspaceId
+      const partitioned = applyFolders(
+        workspace.workspaceId,
+        workspace.path,
+        sessions,
+        list,
+        entryFor(folders, workspace.workspaceId as string),
+        collapsedFolders,
+      )
       if (wsContainsCurrent) containsCurrent = true
       workspaceNodes.push({
         workspaceId: workspace.workspaceId,
@@ -254,7 +385,8 @@ export function deriveGroups(
         sessionCount: sessions.length,
         expanded: wsExpanded,
         containsCurrent: wsContainsCurrent,
-        sessions: wsExpanded ? sessions : [],
+        sessions: wsExpanded ? partitioned.sessions : [],
+        ...(partitioned.folders === undefined ? {} : { folders: partitioned.folders }),
       })
     }
     const appearance = categoryAppearance(manual, key)
@@ -285,9 +417,11 @@ export function deriveTopLevel(
   view: GroupsTreeView,
   manual: ManualGroups,
   statuses: SessionStatuses = new Map(),
+  folders: FoldersDocument = EMPTY_FOLDERS_DOCUMENT,
 ): WorkspaceGroupNode[] {
   const archived = new Set(archivedSessionIds)
   const expandedWorkspaces = new Set(view.expandedWorkspaces)
+  const collapsedFolders = new Set(view.collapsedFolders ?? [])
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
   const currentWorkspaceId = current === undefined
@@ -305,6 +439,14 @@ export function deriveTopLevel(
     if (workspace === undefined) continue
     const sessions = workspaceSessions(list, workspace, archived, descendants, statuses, current)
     const wsExpanded = expandedWorkspaces.has(workspaceId)
+    const partitioned = applyFolders(
+      workspace.workspaceId,
+      workspace.path,
+      sessions,
+      list,
+      entryFor(folders, workspaceId),
+      collapsedFolders,
+    )
     nodes.push({
       workspaceId: workspace.workspaceId,
       path: workspace.path,
@@ -313,7 +455,8 @@ export function deriveTopLevel(
       sessionCount: sessions.length,
       expanded: wsExpanded,
       containsCurrent: workspace.workspaceId === currentWorkspaceId,
-      sessions: wsExpanded ? sessions : [],
+      sessions: wsExpanded ? partitioned.sessions : [],
+      ...(partitioned.folders === undefined ? {} : { folders: partitioned.folders }),
     })
   }
   return nodes
@@ -426,6 +569,8 @@ export interface SearchTree {
  * @param snippetsBySession - optional content-match snippets keyed by session id.
  * @param statuses - unified UI status by Session (drives the running / warning
  * / unread-completion row indicators); defaults to none (tests).
+ * @param folders - per-workspace extra folders + root, so a hit inside an extra
+ * folder surfaces under that folder instead of flat under the project.
  * @returns group folders in render order plus top-level matched workspaces,
  * pruned to matched branches only.
  */
@@ -438,6 +583,7 @@ export function deriveSearchGroups(
   manual: ManualGroups,
   snippetsBySession?: ReadonlyMap<SessionId, string>,
   statuses: SessionStatuses = new Map(),
+  folders: FoldersDocument = EMPTY_FOLDERS_DOCUMENT,
 ): SearchTree {
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
@@ -464,6 +610,14 @@ export function deriveSearchGroups(
     }
     if (nodes.length === 0) continue
 
+    const partitioned = applyFolders(
+      workspace.workspaceId,
+      workspace.path,
+      nodes,
+      list,
+      entryFor(folders, workspace.workspaceId as string),
+      undefined,
+    )
     const node: WorkspaceGroupNode = {
       workspaceId: workspace.workspaceId,
       path: workspace.path,
@@ -472,7 +626,8 @@ export function deriveSearchGroups(
       sessionCount: nodes.length,
       expanded: true,
       containsCurrent: false,
-      sessions: nodes,
+      sessions: partitioned.sessions,
+      ...(partitioned.folders === undefined ? {} : { folders: partitioned.folders }),
     }
     const key = resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title)
     if (key === undefined) {

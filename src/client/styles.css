@@ -299,6 +299,66 @@
   opacity:1;
 }
 
+/* Folder rows (multi-root workspaces): one row per folder under a project. The
+   folder label lands on the session indent (74) and the folder's own sessions
+   step one further (90), so the ladder reads 42 → 58 → 74 → 90 on the same
+   16px step the group/project/session rows already use. */
+.wgFolderRow {
+  cursor:pointer;
+  user-select:none;
+  border-radius:6px;
+  align-items:center;
+  gap:4px;
+  height:28px;
+  padding:0 4px 0 38px;
+  display:flex;
+  position:relative;
+}
+
+.wgFolderRow:hover {
+  background:var(--dsw-bg-hover,#7f7f7f1f);
+}
+
+.wgFolderRow:hover .wgRowActions,.wgFolderRow:focus-within .wgRowActions {
+  opacity:1;
+}
+
+.wgFolderLabel {
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  min-width:0;
+  color:var(--dsw-alias-label-primary,var(--dsw-fg-1,inherit));
+  font-size:12px;
+  font-weight:500;
+  flex:1;
+  overflow:hidden;
+}
+
+/* The base folder is the workspace's own directory: slightly stronger weight so
+   the implicit folder #0 stays distinguishable from the extras. */
+.wgFolderBase .wgFolderLabel {
+  font-weight:600;
+}
+
+.wgFolderRoot {
+  color:var(--dsw-accent,#4a90d9);
+  flex:none;
+  font-size:11px;
+  line-height:1;
+}
+
+.wgFolderCount {
+  color:var(--dsw-fg-3,#7f7f7fcc);
+  flex:none;
+  font-size:11px;
+}
+
+/* Sessions hanging off a folder row: one indent step deeper than a plain
+   session title (74 → 90). */
+.wgSessionNested {
+  padding-left:70px;
+}
+
 .wgTreeWrap {
   position:relative;
 }
@@ -531,6 +591,58 @@
 
 .wgRenameInput:focus {
   border-color:var(--dsw-accent,#4a90d9);
+}
+
+/* Folder list dialog: one row per folder (base first), radio picks the root. */
+.wgFolderList {
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.wgFolderListRow {
+  border-radius:6px;
+  align-items:center;
+  gap:6px;
+  padding:4px 4px 4px 2px;
+  display:flex;
+}
+
+.wgFolderListRow:hover {
+  background:var(--dsw-bg-hover,#7f7f7f1f);
+}
+
+.wgFolderRadio {
+  flex:none;
+  accent-color:var(--dsw-accent,#4a90d9);
+  margin:0;
+}
+
+.wgFolderListLabel {
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  min-width:0;
+  color:var(--dsw-fg-1,inherit);
+  font-size:12px;
+  flex:1;
+  overflow:hidden;
+}
+
+.wgFolderListTag {
+  color:var(--dsw-fg-3,#7f7f7fcc);
+  flex:none;
+  font-size:11px;
+}
+
+.wgFolderListActions {
+  flex:none;
+  align-items:center;
+  gap:2px;
+  display:inline-flex;
+}
+
+.wgFolderListFooter {
+  margin-top:8px;
 }
 
 /* Appearance dialog: colour swatches, icon picker grid, pin toggle. */

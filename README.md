@@ -78,6 +78,23 @@
   skipped for large subtrees, during drag folding, and under `prefers-reduced-motion`
 - Stored in the overlay's `appearance` map — **never in the rule YAML** (see below)
 
+### Multiple folders per workspace (multi-root)
+- **Attach extra folders to a project**: the project row's `⋯` menu opens **文件夹…**
+  (`Folders…`), which lists the project's own directory as the **base folder** (always folder
+  #0, never removable) plus any extra folders you pick
+- **One root folder per project**: the radio column in that dialog and the folder row's
+  `⋯ → 设为根目录` choose which folder new sessions default to; the root row is hoisted to the
+  top of the folder list and carries a ★ badge
+- **Sessions partition by their own cwd**: a project with extra folders shows a folder row
+  above its sessions, and each session drops into the folder that contains its working
+  directory (most specific folder wins, case-insensitive on Windows). Projects without extra
+  folders keep the flat two-level shape — nothing changes for them
+- **Start a session in a specific folder**: the hover `＋` on a folder row opens a session whose
+  cwd is that folder; the base folder keeps the platform's own "new session" gesture so
+  clicking it twice reuses the blank session instead of stacking empty ones
+- Folders start expanded, so attaching one never hides sessions that were already visible;
+  collapse state is per-view and intentionally not persisted
+
 ### Search & operations
 - **Tree-shaped search**: results keep the three-level structure (category → project → matched
   session), matched rows highlighted with a content snippet, 250ms debounce
@@ -88,7 +105,9 @@
 - Every manual action (groups, grouping, ordering, rename, hide) is written to the plugin's own
   overlay (`~/.dsh/workspace-groups.manual.json`), validated by the host and **written
   atomically** (a malformed write returns 400 and keeps the previous file); the tab strip gets
-  the same treatment in its own file (`~/.dsh/workspace-groups.tabs.json`)
+  the same treatment in its own file (`~/.dsh/workspace-groups.tabs.json`), and so do the
+  extra folders / root choice of a project (`~/.dsh/workspace-groups.folders.json`, strict on
+  write, tolerant on read — unknown or vanished folders are dropped instead of breaking the tree)
 - **Zero intrusion**: never touches `~/.dsh/storages/workspace.json`, session on-disk
   structures, or the official `@deepseek-ai/dsh-client-ui-workspace` package; the rule YAML
   is never rewritten
@@ -307,20 +326,29 @@ Artifact contract (mirrors the official client packages):
 
 ```
 src/
-  index.ts              # host half: config snapshot route + manual write route
+  index.ts              # host half: config snapshot route + manual / tabs / folders write routes
   host-config.ts        # sidecar YAML reading/validation
   host-manual.ts        # runtime overlay read/write/validation (atomic publish)
+  host-folders.ts       # per-workspace extra folders + root overlay (strict write, tolerant read)
+  host-tabs.ts          # session tab strip persistence (atomic publish)
   context-types.ts      # host-side cordis service structure types
   core/
     types.ts            # config types (shared by both halves)
     matcher.ts          # classification + manual override priority + ordering pure functions (shared)
+    folders.ts          # multi-root pure logic: effective folders / root / cwd ownership (shared)
   client/
     index.ts            # apply: registers sidebar.workspaces (priority -1)
     contract.ts         # injected surface types
     stores.ts           # expansion-state store (persist: dsh.workspace.groups.view.v1)
-    tree.ts             # three-level tree derivation + tree search derivation
-    GroupsBrowser.tsx   # browser region component (group dialogs + drag grouping/ordering + insertion indicator)
-    rows.tsx            # category/project/session/search-result rows (drag sources/targets)
+    tree.ts             # three-level tree derivation + folder partition + tree search derivation
+    GroupsBrowser.tsx   # browser region component (group dialogs + folder dialog + drag grouping/ordering)
+    rows.tsx            # category/project/folder/session/search-result rows (drag sources/targets)
+    SessionTabs.tsx     # tab strip (pin / drag reorder / context menu / inline rename)
+    tab-store.ts        # tab strip store (order, pin, title override)
+    tab-persist.ts      # tab strip wire calls (GET/PUT /workspace-groups/tabs)
+    folders-persist.ts  # folder overlay wire calls (GET/PUT /workspace-groups/folders)
+    FlowerBranch.tsx    # bloom marker on the active row (geometry in branch.ts)
+    branch.ts           # flower geometry pure functions (unit tested)
     locales.ts          # zh/en copy
     styles.css          # inline styles
 tests/
@@ -328,6 +356,10 @@ tests/
   manual.test.ts        # overlay validation + atomic file round-trip
   tree.test.ts          # tree derivation rendering contract (manual group empty render / override priority)
   store.test.ts         # expansion semantics (collapse writes false, never deletes the key)
+  tabs.test.ts          # tab strip pure logic (append/remove/ordered/restore/indicator)
+  folders.test.ts       # multi-root pure logic + strict/tolerant overlay parsing
+tools/
+  verify-folders.mjs    # plain-node verifier for the folder layer (vitest cannot spawn in the sandbox)
 scripts/
   verify-groups.mjs     # real-browser CDP verification (self-spawns headless Chrome, auto-restores the scene)
 ```

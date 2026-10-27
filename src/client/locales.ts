@@ -34,6 +34,19 @@ export type WorkspaceGroupsKey =
   | 'workspace.moveOutOfGroup'
   | 'workspace.openInFolder'
   | 'workspace.openInFolderError'
+  | 'folder.title'
+  | 'folder.manage'
+  | 'folder.listAria'
+  | 'folder.base'
+  | 'folder.setRoot'
+  | 'folder.rootBadge'
+  | 'folder.remove'
+  | 'folder.add'
+  | 'folder.done'
+  | 'folder.duplicate'
+  | 'folder.addError'
+  | 'folder.sessionError'
+  | 'folder.saveError'
   | 'group.create'
   | 'group.createTitle'
   | 'group.createPlaceholder'
@@ -149,6 +162,19 @@ export const zh: WorkspaceGroupsDict = {
   'workspace.moveOutOfGroup': '移出分组',
   'workspace.openInFolder': '在文件夹中打开',
   'workspace.openInFolderError': '打开文件夹失败',
+  'folder.title': '文件夹',
+  'folder.manage': '文件夹…',
+  'folder.listAria': '工作区文件夹',
+  'folder.base': '基础文件夹',
+  'folder.setRoot': '设为根目录',
+  'folder.rootBadge': '根目录',
+  'folder.remove': '从工作区移除',
+  'folder.add': '添加文件夹',
+  'folder.done': '完成',
+  'folder.duplicate': '该文件夹已在此工作区中',
+  'folder.addError': '添加文件夹失败',
+  'folder.sessionError': '新建会话失败',
+  'folder.saveError': '文件夹保存失败',
   'group.create': '新建分组',
   'group.createTitle': '新建分组',
   'group.createPlaceholder': '分组名称',
@@ -263,6 +289,19 @@ export const en: WorkspaceGroupsDict = {
   'workspace.moveOutOfGroup': 'Move out of group',
   'workspace.openInFolder': 'Open in folder',
   'workspace.openInFolderError': 'Could not open the folder',
+  'folder.title': 'Folders',
+  'folder.manage': 'Folders…',
+  'folder.listAria': 'Workspace folders',
+  'folder.base': 'Base folder',
+  'folder.setRoot': 'Set as root',
+  'folder.rootBadge': 'Root',
+  'folder.remove': 'Remove from workspace',
+  'folder.add': 'Add folder',
+  'folder.done': 'Done',
+  'folder.duplicate': 'That folder is already in this workspace',
+  'folder.addError': 'Could not add the folder',
+  'folder.sessionError': 'Could not start a session',
+  'folder.saveError': 'Could not save folders',
   'group.create': 'New group',
   'group.createTitle': 'New group',
   'group.createPlaceholder': 'Group name',

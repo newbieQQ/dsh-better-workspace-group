@@ -1,0 +1,146 @@
+/**
+ * Standalone verifier for the per-workspace folder layer.
+ *
+ * vitest cannot spawn in this sandbox (EPERM), so this script runs the same
+ * critical assertions under plain Node 24 type-stripping:
+ *   node tools/verify-folders.mjs
+ *
+ * It imports the pure module (`src/core/folders.ts`) and the host overlay
+ * (`src/host-folders.ts`, Node built-ins only), exercises the root/cwd rules and
+ * the strict-write / tolerant-read boundary, then prints exactly one line.
+ */
+import assert from 'node:assert/strict'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+
+const coreUrl = new URL('../src/core/folders.ts', import.meta.url)
+const hostUrl = new URL('../src/host-folders.ts', import.meta.url)
+
+const {
+  addFolder,
+  effectiveFolders,
+  entryFor,
+  folderOfCwd,
+  removeFolder,
+  rootOf,
+  samePath,
+  setRoot,
+} = await import(coreUrl.href)
+const {
+  parseFoldersDocument,
+  readFoldersDocument,
+  validateFoldersDocument,
+  writeFoldersDocument,
+} = await import(hostUrl.href)
+
+const BASE = 'C:\\work\\project'
+const EXTRA = 'C:\\work\\extra'
+let checks = 0
+const check = (condition, message) => {
+  checks += 1
+  assert.ok(condition, message)
+}
+const equal = (actual, expected, message) => {
+  checks += 1
+  assert.deepEqual(actual, expected, message)
+}
+
+// --- path identity -----------------------------------------------------------
+check(samePath('C:\\Work\\Project', 'c:\\work\\project'), 'samePath is case-insensitive for Windows paths')
+check(samePath('C:\\work\\project\\', 'C:\\work\\project'), 'samePath ignores a trailing separator')
+check(samePath('C:/work/project', 'C:\\work\\project'), 'samePath folds separators on Windows paths')
+check(!samePath('/home/me/Project', '/home/me/project'), 'POSIX paths stay case-sensitive')
+check(!samePath('/home/me/project', '/home/me/projectfile'), 'a name prefix is not the same path')
+
+// --- effective folders / root ------------------------------------------------
+equal(effectiveFolders(BASE, undefined), [BASE], 'base folder is effective without an entry')
+equal(effectiveFolders(BASE, { folders: [EXTRA] }), [BASE, EXTRA], 'base comes first, extras keep order')
+equal(
+  effectiveFolders(BASE, { folders: ['  ', BASE, 'C:\\WORK\\EXTRA', EXTRA, EXTRA] }),
+  [BASE, 'C:\\WORK\\EXTRA'],
+  'blank, self-referencing and duplicate extras are dropped (first spelling wins)',
+)
+equal(rootOf(BASE, undefined), BASE, 'root defaults to the workspace path')
+equal(rootOf(BASE, { folders: [EXTRA] }), BASE, 'root stays the workspace path when omitted')
+equal(rootOf(BASE, { folders: [EXTRA], root: EXTRA }), EXTRA, 'stored root wins')
+equal(rootOf(BASE, { folders: [EXTRA], root: 'D:\\gone' }), BASE, 'dangling root falls back to the base')
+equal(entryFor({ version: 1, workspaces: { 'ws-1': { folders: [EXTRA] } } }, 'ws-1'), { folders: [EXTRA] }, 'entryFor reads by id')
+equal(entryFor({ version: 1, workspaces: {} }, 'ws-2'), undefined, 'entryFor misses cleanly')
+
+// --- cwd ownership -----------------------------------------------------------
+const entry = { folders: [EXTRA, 'C:\\work\\extra\\nested'] }
+equal(folderOfCwd(undefined, BASE, entry), BASE, 'undefined cwd owns the base')
+equal(folderOfCwd('C:\\work\\project\\src', BASE, entry), BASE, 'a workspace cwd owns the base')
+equal(folderOfCwd('C:\\work\\extra\\src', BASE, entry), EXTRA, 'an extra folder cwd owns that folder')
+equal(folderOfCwd('C:\\work\\extra\\nested\\deep', BASE, entry), 'C:\\work\\extra\\nested', 'the most specific folder wins')
+equal(folderOfCwd('D:\\elsewhere', BASE, entry), BASE, 'an outside cwd falls back to the base')
+equal(folderOfCwd('C:\\work\\extrabonus', BASE, entry), BASE, 'a name prefix is not an ancestor')
+equal(folderOfCwd('C:\\WORK\\EXTRA', BASE, entry), EXTRA, 'cwd matching is case-insensitive')
+
+// --- entry editing (pure, never mutating) ------------------------------------
+const before = { folders: [EXTRA] }
+const added = addFolder(before, 'D:\\other')
+equal(added, { folders: [EXTRA, 'D:\\other'] }, 'addFolder appends')
+equal(before, { folders: [EXTRA] }, 'addFolder does not mutate its input')
+equal(addFolder({ folders: ['D:\\other'] }, '  D:\\other  '), { folders: ['D:\\other'] }, 'addFolder is idempotent and trims')
+equal(addFolder(undefined, EXTRA), { folders: [EXTRA] }, 'addFolder creates an entry')
+equal(removeFolder({ folders: [EXTRA], root: EXTRA }, EXTRA), { folders: [] }, 'removeFolder clears a root pointing at it')
+equal(
+  removeFolder({ folders: [EXTRA, 'D:\\other'], root: 'D:\\other' }, EXTRA),
+  { folders: ['D:\\other'], root: 'D:\\other' },
+  'removeFolder keeps an unrelated root',
+)
+equal(setRoot({ folders: [EXTRA] }, EXTRA), { folders: [EXTRA], root: EXTRA }, 'setRoot stores an extra folder')
+equal(setRoot({ folders: [EXTRA], root: EXTRA }, BASE), { folders: [EXTRA] }, 'setRoot on the base clears the root')
+equal(setRoot(undefined, BASE), { folders: [] }, 'setRoot without extras yields an empty entry')
+
+// --- strict write validation -------------------------------------------------
+const valid = { version: 1, workspaces: { 'ws-1': { folders: [EXTRA], root: EXTRA } } }
+equal(validateFoldersDocument(valid), valid, 'a valid document round-trips validation')
+const rejects = (value, pattern) => {
+  checks += 1
+  assert.throws(() => validateFoldersDocument(value), pattern)
+}
+rejects({ version: 2, workspaces: {} }, /version/)
+rejects([], /mapping/)
+rejects('nope', /mapping/)
+rejects({ version: 1, workspaces: { 'ws-1': { folders: ['work'] } } }, /absolute/)
+rejects({ version: 1, workspaces: { 'ws-1': { folders: [EXTRA, 'c:\\WORK\\extra'] } } }, /duplicate/)
+rejects({ version: 1, workspaces: { 'ws-1': { folders: [EXTRA], root: 'D:\\other' } } }, /root/)
+rejects({ version: 1, workspaces: { 'ws-1': { folders: ['C:\\a\u0000b'] } } }, /NUL/)
+rejects({ version: 1, workspaces: { 'ws-1': { folders: ['C:\\' + 'a'.repeat(1100)] } } }, /1024/)
+rejects({ version: 1, workspaces: { 'ws-1': { folders: Array.from({ length: 33 }, (_, i) => `C:\\w\\${i}`) } } }, /32/)
+rejects({ version: 1, workspaces: { ['w'.repeat(201)]: { folders: [EXTRA] } } }, /200/)
+
+// --- tolerant read -----------------------------------------------------------
+equal(parseFoldersDocument(undefined), { version: 1, workspaces: {} }, 'undefined parses empty')
+equal(parseFoldersDocument({ version: 7, workspaces: {} }), { version: 1, workspaces: {} }, 'a bad version parses empty')
+equal(
+  parseFoldersDocument({
+    version: 1,
+    workspaces: {
+      'ws-1': { folders: [EXTRA, 'relative', 42, 'c:\\WORK\\extra', ''], root: 'D:\\gone' },
+      '': { folders: [EXTRA] },
+      'ws-2': 'nope',
+    },
+  }),
+  { version: 1, workspaces: { 'ws-1': { folders: [EXTRA] } } },
+  'tolerant parse drops junk instead of throwing',
+)
+
+// --- file round-trip ---------------------------------------------------------
+const dir = await mkdtemp(join(tmpdir(), 'wg-folders-verify-'))
+try {
+  equal(await readFoldersDocument(join(dir, 'missing.json')), { version: 1, workspaces: {} }, 'a missing file reads empty')
+  await writeFile(join(dir, 'junk.json'), '{not json', 'utf8')
+  equal(await readFoldersDocument(join(dir, 'junk.json')), { version: 1, workspaces: {} }, 'unreadable JSON reads empty')
+  const path = join(dir, 'nested', 'workspace-groups.folders.json')
+  await writeFoldersDocument(path, valid)
+  equal(await readFoldersDocument(path), valid, 'atomic write round-trips through the reader')
+} finally {
+  await rm(dir, { recursive: true, force: true })
+}
+
+// Success is a single machine-checkable line: the harness pastes this output.
+process.stdout.write('folders: all assertions passed\n')

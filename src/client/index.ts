@@ -166,6 +166,17 @@ export function apply(ctx: Context): void {
     // retained `mainView` selection, supersession and pending-navigation
     // cancellation (0.1.6 moved them out of `ctx.sessions`).
     startSession: (workspaceId) => { ctx.uiWorkspace.startSession(workspaceId) },
+    // Folder rows create a real Session rooted in that folder. `cwd` stays out
+    // of the call for the base folder (the Workspace's canonical directory),
+    // where the controller already defaults to `WorkspaceView.path`.
+    createSessionIn: async (workspaceId, cwd) => {
+      const sessionId = await ctx.sessions.create({
+        workspaceId,
+        ...(cwd === undefined ? {} : { cwd }),
+      })
+      ctx.uiWorkspace.openSession(sessionId)
+      return sessionId
+    },
     open: (sessionId) => { ctx.uiWorkspace.openSession(sessionId) },
     forkSession: (sessionId) => {
       ctx.uiWorkspace.forkSession(sessionId).catch((reason: unknown) => {

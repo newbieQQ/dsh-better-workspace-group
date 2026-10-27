@@ -30,6 +30,11 @@ export type GroupsBrowserInjected = {
     };
     /** Start a New Session in a Workspace (reuse-or-create its blank session and open it). */
     startSession: (workspaceId?: WorkspaceId) => void;
+    /**
+     * Create a real Session in one folder of a Workspace and open it. `cwd` is
+     * omitted for the base folder (the Workspace's own canonical directory).
+     */
+    createSessionIn: (workspaceId: WorkspaceId, cwd?: string) => Promise<SessionId>;
     /** Open a real Session. */
     open: (sessionId: SessionId) => void;
     /** Search current visible conversation messages. */

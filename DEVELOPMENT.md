@@ -34,9 +34,10 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/index.ts` | 插件入口。`inject = ['webServer']`，注册 4 条路由：`GET /workspace-groups/config`、`GET|PUT /workspace-groups/tabs`、`PUT /workspace-groups/manual` |
+| `src/index.ts` | 插件入口。`inject = ['webServer']`，注册 4 组路由：`GET /workspace-groups/config`、`GET|PUT /workspace-groups/tabs`、`PUT /workspace-groups/manual`、`GET|PUT /workspace-groups/folders` |
 | `src/host-config.ts` | 读用户 YAML 分类规则（默认 `~/.dsh/workspace-groups.yaml`），校验后以 JSON 下发 |
 | `src/host-manual.ts` | 运行期分组覆盖（手动分组 + 单工作区归类覆盖），落 `$DSH_HOME/workspace-groups.manual.json` |
+| `src/host-folders.ts` | 每个工作区的额外文件夹 + 根目录，落 `$DSH_HOME/workspace-groups.folders.json`（写时严格、读时宽容） |
 | `src/host-tabs.ts` | 会话标签条的宿主侧持久化。放在宿主是因为**浏览器存储按 origin 隔离，而 origin 含端口**，`dsh web`/测试/桌面壳端口各不相同 |
 | `src/context-types.ts` | 本插件消费的 cordis 服务结构类型（第三方插件拿不到 monorepo 内的 `declare module` 合并） |
 
@@ -46,6 +47,7 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 | --- | --- |
 | `src/core/types.ts` | 规则配置类型，零运行时依赖 |
 | `src/core/matcher.ts` | 归类与排序的纯函数：工作区归哪个分类、分类/工作区怎么排。宿主校验与客户端建树共用，语义不会漂移 |
+| `src/core/folders.ts` | 多文件夹的纯函数：有效文件夹列表、根目录解析、cwd 归属（最具体优先）。宿主校验与客户端建树共用 |
 
 浏览器半边（`src/client/`，输出 CJS 闭包工厂）：
 
@@ -55,7 +57,8 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 | `contract.ts` | 注入共享契约（`GroupsBrowserInjected`），镜像官方 ui-workspace 的注入形状 |
 | `GroupsBrowser.tsx` | 主 UI：分区头（标题/搜索/新建分组/添加工作区）+ 三级树 + 分组/工作区/会话对话框 |
 | `rows.tsx` | 树的行组件（行内菜单、状态点、图标），对话框挂在 browser root 以免折叠时卸载 |
-| `tree.ts` | 纯派生：分类文件夹 → 项目文件夹 → 会话行；可见性规则对齐官方树 |
+| `tree.ts` | 纯派生：分类文件夹 → 项目文件夹 →（可选）文件夹行 → 会话行；可见性规则对齐官方树 |
+| `folders-persist.ts` | 文件夹 overlay 的客户端侧，读写宿主 `/workspace-groups/folders` |
 | `locales.ts` | `workspaceGroups` 命名空间词典（zh/en + key 联合类型） |
 | `styles.css` | 全部样式，`?inline` 导入后由构建期 lightningcss 压缩内联 |
 | `branch.ts` / `FlowerBranch.tsx` | 侧栏当前行的「花朵」标记（几何计算在 `branch.ts`，仍由单测覆盖；连线与逐行圆点已移除，只画花朵） |
@@ -71,7 +74,8 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 | `stores.ts` | 视图 store 工厂（展开状态，独立持久化 key，不碰官方 `dsh.workspace.view.v5`） |
 | `store-hook.ts` | 面向 store 实例的框架形状选择器 hook（`useSyncExternalStoreWithSelector`） |
 
-其它：`tests/*.test.ts`（vitest，覆盖 core matcher/tree/store），`cordis.patch.yml`
+其它：`tests/*.test.ts`（vitest，覆盖 core matcher/tree/store/tabs/folders），
+`tools/verify-folders.mjs`（沙箱内 vitest 起不来时的等价纯 node 断言），`cordis.patch.yml`
 （cordis 插件补丁层），`scripts/verify-groups.mjs`，`workspace-groups.example.yaml`。
 
 ## 3. 构建 / 校验 / 装回去

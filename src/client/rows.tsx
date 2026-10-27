@@ -51,7 +51,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceGroupsKey } from './locales.ts'
-import type { CategoryNode, SessionNode, WorkspaceGroupNode } from './tree.ts'
+import type { CategoryNode, FolderNode, SessionNode, WorkspaceGroupNode } from './tree.ts'
 
 type T = TranslateNS<'workspaceGroups'>
 
@@ -271,7 +271,7 @@ export function CategoryRow({ node, t, onToggle, onRename, onDelete, onTogglePin
 }
 
 /** One workspace folder row inside a category: draggable source + drop target. */
-export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDelete, canMoveOut = false, onMoveOut, onOpenInFolder, flat = false, dropActive = false, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartExtra }: {
+export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDelete, canMoveOut = false, onMoveOut, onManageFolders, onOpenInFolder, flat = false, dropActive = false, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartExtra }: {
   node: WorkspaceGroupNode
   t: T
   onToggle: () => void
@@ -281,6 +281,8 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
   /** Project currently sits inside a group — offer "move out of group". */
   canMoveOut?: boolean
   onMoveOut?: () => void
+  /** Open the folder-management dialog (extra folders + root). */
+  onManageFolders?: () => void
   /**
    * Open the project directory in the host's file manager. Omitted when the
    * host resolved no folder application (no capability, or a remote launch),
@@ -293,12 +295,15 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
   onDragStartExtra?: () => void
 } & RowDropProps) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const menuItems = [
+  const menuItems: MenuEntry[] = [
     ...(onOpenInFolder !== undefined
       ? [{ id: 'openInFolder', label: t('workspace.openInFolder'), icon: <IconFolderOpenOutlineRegular size={16} /> }]
       : []),
     ...(canMoveOut && onMoveOut !== undefined
       ? [{ id: 'moveOut', label: t('workspace.moveOutOfGroup'), icon: <IconRightUpOutlineRegular size={16} /> }]
+      : []),
+    ...(onManageFolders !== undefined
+      ? [{ id: 'folders', label: t('folder.manage'), icon: <IconFolderOpenOutlineRegular size={16} /> }]
       : []),
     { id: 'rename', label: t('workspace.rename'), icon: <IconEditOutlineRegular /> },
     { id: 'delete', label: t('workspace.delete'), icon: <IconTrashOutlineRegular />, danger: true },
@@ -348,6 +353,7 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
             setMenuOpen(false)
             if (id === 'openInFolder') onOpenInFolder?.()
             if (id === 'moveOut') onMoveOut?.()
+            if (id === 'folders') onManageFolders?.()
             if (id === 'rename') onRename()
             if (id === 'delete') onDelete()
           }}
@@ -369,6 +375,110 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
           type="button"
           className="wgIconButton"
           draggable={false}
+          aria-label={`${t('session.new')} ${node.label}`}
+          onClick={(e) => { e.stopPropagation(); onNewSession() }}
+        >
+          <IconPlusOutlineRegular />
+        </button>
+      </span>
+    </div>
+  )
+}
+
+/**
+ * One folder row under a project: the base directory (folder #0) plus every
+ * extra folder of that workspace. Sits at the session indent level so the
+ * 42/58/74 ladder is preserved, and its own session rows indent one step
+ * deeper (see `.wgSessionNested`).
+ *
+ * Deliberately NOT a drag source or drop target: folders are a fixed,
+ * host-ordered list; reordering them would need a write path this feature does
+ * not have.
+ */
+export function FolderRow({ node, t, onToggle, onNewSession, onSetRoot, onRemove, onOpenInFolder, creating = false }: {
+  node: FolderNode
+  t: T
+  onToggle: () => void
+  onNewSession: () => void
+  onSetRoot: () => void
+  onRemove: () => void
+  /** Absent when the host resolved no folder application. */
+  onOpenInFolder?: () => void
+  /** A session is being created here: the hover ＋ stays disabled. */
+  creating?: boolean
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuItems: MenuEntry[] = [
+    { id: 'newSession', label: t('session.new'), icon: <IconPlusOutlineRegular /> },
+    ...(onOpenInFolder !== undefined
+      ? [{ id: 'openInFolder', label: t('workspace.openInFolder'), icon: <IconFolderOpenOutlineRegular size={16} /> }]
+      : []),
+    ...(node.isRoot
+      ? []
+      : [{ id: 'setRoot', label: t('folder.setRoot'), icon: <IconPinOutlineRegular /> }]),
+    ...(node.isBase
+      ? []
+      : [
+          { type: 'separator' as const, id: 'folder-menu-separator' },
+          { id: 'remove', label: t('folder.remove'), icon: <IconTrashOutlineRegular />, danger: true },
+        ]),
+  ]
+  return (
+    <div
+      className={`wgFolderRow${node.isRoot ? ' wgFolderRooted' : ''}${node.isBase ? ' wgFolderBase' : ''}`}
+      role="treeitem"
+      aria-expanded={node.expanded}
+      aria-label={node.label}
+      data-wg-row-folder=""
+      data-wg-folder={node.path}
+      {...(node.isRoot ? { 'data-wg-folder-root': '' } : {})}
+      /* Branch hook only (no group): a folder is a leaf branch point, its
+         sessions hang off it like a project's do. */
+      data-wg-branch-row=""
+      onClick={onToggle}
+    >
+      <span className={`wgChevron${node.expanded ? ' wgChevronOpen' : ''}`}>
+        <IconTriangleRightFillMedium />
+      </span>
+      <span className="wgCategoryIcon" data-wg-row-icon="folder">
+        {node.expanded ? <IconFolderOpenMedium /> : <IconFolderCloseMedium />}
+      </span>
+      <span className="wgFolderLabel" title={node.path}>{node.label}</span>
+      {node.isRoot && (
+        <span className="wgFolderRoot" title={t('folder.rootBadge')} aria-label={t('folder.rootBadge')}>★</span>
+      )}
+      <span className="wgFolderCount">{node.sessions.length}</span>
+      <span className="wgRowActions">
+        <Menu
+          open={menuOpen}
+          onClose={() => { setMenuOpen(false) }}
+          items={menuItems}
+          onSelect={(id) => {
+            setMenuOpen(false)
+            if (id === 'newSession') onNewSession()
+            if (id === 'openInFolder') onOpenInFolder?.()
+            if (id === 'setRoot') onSetRoot()
+            if (id === 'remove') onRemove()
+          }}
+          portal
+          closeOnPointerLeave
+          anchor={(
+            <button
+              type="button"
+              className="wgIconButton"
+              draggable={false}
+              aria-label={`${t('folder.title')} ${node.label}`}
+              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+            >
+              <IconEllipsisOutlineRegular />
+            </button>
+          )}
+        />
+        <button
+          type="button"
+          className="wgIconButton"
+          draggable={false}
+          disabled={creating}
           aria-label={`${t('session.new')} ${node.label}`}
           onClick={(e) => { e.stopPropagation(); onNewSession() }}
         >
@@ -476,7 +586,7 @@ export function RowGroup({ expanded, className, animate = true, children }: {
 }
 
 /** One session leaf row. */
-export function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, onArchive }: {
+export function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, onArchive, nested = false }: {
   node: SessionNode
   currentId: string | undefined
   now: number
@@ -485,6 +595,8 @@ export function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, 
   onRename: (id: SessionNode['id'], currentTitle: string) => void
   onFork: (id: SessionNode['id']) => void
   onArchive: (id: SessionNode['id']) => void
+  /** Rendered under a folder row: one indent step deeper than a plain session. */
+  nested?: boolean
 }) {
   const selected = node.id === currentId
   const [menuOpen, setMenuOpen] = useState(false)
@@ -502,7 +614,7 @@ export function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, 
   ]
   return (
     <div
-      className={`wgSessionRow${selected ? ' wgSelected' : ''}${node.matched === true ? ' wgMatched' : ''}`}
+      className={`wgSessionRow${nested ? ' wgSessionNested' : ''}${selected ? ' wgSelected' : ''}${node.matched === true ? ' wgMatched' : ''}`}
       role="treeitem"
       aria-selected={selected}
       data-wg-branch-row=""

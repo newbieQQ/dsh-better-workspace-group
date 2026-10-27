@@ -12,6 +12,11 @@
  * - `PUT /workspace-groups/manual` — replace the whole manual overlay
  *   (manual groups + per-workspace overrides). Validated against the current
  *   rule categories, written atomically to the plugin-owned JSON sidecar.
+ * - `GET /workspace-groups/folders` — the per-workspace extra-folder overlay
+ *   plus each workspace's root folder.
+ * - `PUT /workspace-groups/folders` — replace the folder overlay whole.
+ *   Strictly validated (absolute paths, no duplicates, root membership) and
+ *   written atomically; the saved document is echoed back.
  *
  * Core workspace.json / session storage is never touched.
  */
@@ -34,6 +39,12 @@ import {
   type PersistedTab,
   type TabsDocument,
 } from './host-tabs.ts'
+import {
+  defaultFoldersPath,
+  readFoldersDocument,
+  validateFoldersDocument,
+  writeFoldersDocument,
+} from './host-folders.ts'
 
 /** Plugin identity for cordis.yml rows. */
 export const name = '@dsh-xhl/workspace-groups'
@@ -104,6 +115,7 @@ export function apply(ctx: GroupsContext): void {
   const configPath = defaultConfigPath()
   const manualPath = defaultManualPath()
   const tabsPath = defaultTabsPath()
+  const foldersPath = defaultFoldersPath()
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -230,4 +242,58 @@ export function apply(ctx: GroupsContext): void {
       res.end(body)
     },
   }), '@dsh-xhl/workspace-groups: /workspace-groups/manual route')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/workspace-groups/folders',
+    handler: async (req, res) => {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        // The reader is tolerant by construction (a missing or torn sidecar is
+        // the empty document), so it cannot fail a GET.
+        const document = await readFoldersDocument(foldersPath)
+        const body = JSON.stringify(document)
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Length': Buffer.byteLength(body),
+        })
+        res.end(req.method === 'HEAD' ? undefined : body)
+        return
+      }
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method not allowed')
+        return
+      }
+      let raw: unknown
+      try {
+        raw = JSON.parse(await readBody(req, MAX_MANUAL_BODY_BYTES))
+      } catch (error) {
+        const status = error instanceof HttpError ? error.status : 400
+        writeError(res, status, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+        return
+      }
+      let document
+      try {
+        document = validateFoldersDocument(raw)
+      } catch (error) {
+        writeError(res, 400, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+        return
+      }
+      try {
+        await writeFoldersDocument(foldersPath, document)
+      } catch (error) {
+        writeError(res, 500, `workspace-groups: failed to write folder overlay: ${error instanceof Error ? error.message : String(error)}`)
+        return
+      }
+      // Echo the normalized document: the client renders exactly what the host
+      // accepted, not its own (possibly trimmed) guess.
+      const body = JSON.stringify(document)
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Length': Buffer.byteLength(body),
+      })
+      res.end(body)
+    },
+  }), '@dsh-xhl/workspace-groups: /workspace-groups/folders route')
 }

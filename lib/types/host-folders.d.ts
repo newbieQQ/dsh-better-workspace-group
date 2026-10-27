@@ -1,0 +1,46 @@
+import { type FoldersDocument } from './core/folders.ts';
+/** File name of the folder sidecar (also the stable error-text prefix). */
+export declare const FOLDERS_FILE_NAME = "workspace-groups.folders.json";
+/** Hard limits enforced at the write boundary. */
+export declare const FOLDERS_PER_WORKSPACE_LIMIT = 32;
+export declare const WORKSPACE_ID_LIMIT = 200;
+export declare const FOLDER_PATH_LIMIT = 1024;
+/** Default overlay location: `$DSH_HOME/workspace-groups.folders.json`. */
+export declare function defaultFoldersPath(): string;
+/**
+ * True when `path` is absolute in the host platform's spelling: a drive
+ * letter or UNC prefix on Windows, a leading slash elsewhere.
+ * @param path - candidate path.
+ */
+export declare function isAbsoluteFolderPath(path: string): boolean;
+/**
+ * Tolerant reader: shape-normalizes whatever was on disk and drops unusable
+ * workspaces, folders and roots instead of throwing. A missing, non-mapping or
+ * unknown-version document yields the empty document.
+ * @param raw - parsed JSON value.
+ */
+export declare function parseFoldersDocument(raw: unknown): FoldersDocument;
+/**
+ * Strict writer-side validation. Every rule is enforced and the first problem
+ * throws, so the PUT route rejects instead of persisting a half-valid file.
+ * @param raw - parsed JSON value from the request body.
+ * @returns the normalized document to save.
+ * @throws when version, workspace ids, folder paths, duplicates or the root
+ * membership are wrong.
+ */
+export declare function validateFoldersDocument(raw: unknown): FoldersDocument;
+/**
+ * Read + tolerate the overlay file. A missing or unreadable file yields the
+ * empty document: folders are a convenience, and a broken sidecar must not take
+ * the tree down with it.
+ * @param path - overlay file path.
+ */
+export declare function readFoldersDocument(path: string): Promise<FoldersDocument>;
+/**
+ * Atomically replace the overlay file: write a same-directory temp file,
+ * fsync it, then rename over the target. A crash never leaves a torn JSON at
+ * the real path (readers see either the old or the new file).
+ * @param path - target file path.
+ * @param document - validated document to persist.
+ */
+export declare function writeFoldersDocument(path: string, document: FoldersDocument): Promise<void>;
