@@ -68,11 +68,11 @@
     }
   },
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\" && pnpm build:types && tsdown",
+    "build": "node -e \"require('node:fs').rmSync('lib', { recursive: true, force: true })\" && tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir lib/types && tsdown",
     "build:types": "tsc -p tsconfig.build.json --noEmit false --declaration --emitDeclarationOnly --outDir lib/types",
     "watch": "tsdown --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "verify": "pnpm typecheck && pnpm test",
+    "verify": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit && vitest run",
     "test": "vitest run"
   },
   "peerDependencies": {
