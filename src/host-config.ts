@@ -1,5 +1,5 @@
 /**
- * Sidecar config reading for dsh-workspace-groups. The classification rules
+ * Sidecar config reading for @dsh-xhl/workspace-groups. The classification rules
  * live in a user-editable YAML file (default `~/.dsh/workspace-groups.yaml`),
  * read and validated on the host, served to the browser half as JSON. The
  * core workspace.json and session storage are never touched.

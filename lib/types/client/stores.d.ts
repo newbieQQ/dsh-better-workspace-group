@@ -10,7 +10,7 @@
  * unit tests exercise the real semantics without a browser module loader;
  * this file only binds them through defineStore.
  */
-import { type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client';
+import { type EngineStoreHandle } from '@deepseek-ai/dsh-client-store';
 import { retainKeysImpl, setCategoryExpandedImpl, setWorkspaceExpandedImpl, type GroupsViewState } from './store-core.ts';
 /** Annotation twin of the actions literal below (structural type, satisfies `ActionsDecl`). */
 type GroupsViewActions = {

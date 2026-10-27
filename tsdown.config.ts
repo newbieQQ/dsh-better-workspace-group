@@ -40,6 +40,13 @@ const CLIENT_EXTERNALS = [
   '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
+  // `defineStore` / store handle types. In the current shell the store runtime is
+  // the module-table row `@deepseek-ai/dsh-client-store`: official plugins load it
+  // exactly this way (e.g. `@deepseek-ai/dsh-api-job-controller/lib/client.js`
+  // does `require("@deepseek-ai/dsh-client-store")`). The older
+  // `@deepseek-ai/dsh-client-runtime/client` row is kept for compatibility with
+  // plugins built before the rename.
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-runtime/client',
 ] as const
 
@@ -140,7 +147,7 @@ function clientConfig(): UserConfig {
     ],
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: `window.__ModuleLoader__.load({ id: "dsh-workspace-groups", factory: (require) => {`,
+      banner: `window.__ModuleLoader__.load({ id: "@dsh-xhl/workspace-groups", factory: (require) => {`,
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },

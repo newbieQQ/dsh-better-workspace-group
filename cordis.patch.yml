@@ -1,12 +1,12 @@
-# dsh-workspace-groups bundle patch
+# @dsh-xhl/workspace-groups bundle patch
 #
 # This file is the `dsh.bundle.patch` layer of the package: when the plugin is
 # installed through the official CLI —
 #
-#   dsh plugin --profile <name> add dsh-workspace-groups
+#   dsh plugin --profile <name> add @dsh-xhl/workspace-groups
 #
 # — the command reconciles `dsh.profile.bundles` against installed packages
-# and, seeing this declaration, appends `dsh-workspace-groups` to the bundle
+# and, seeing this declaration, appends `@dsh-xhl/workspace-groups` to the bundle
 # stack. The profile boot then merges THIS patch (a single `insert` of the
 # plugin row) exactly like a manual cordis.patch.yml mount line.
 #
@@ -14,5 +14,5 @@
 # host Loader resolves as a package, and a `config` the host half consumes.
 - insert:
     - id: workspace-groups
-      name: 'dsh-workspace-groups'
+      name: '@dsh-xhl/workspace-groups'
       config: {}

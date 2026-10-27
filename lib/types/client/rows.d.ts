@@ -8,7 +8,7 @@
  * workspace rows, standing for their containing category) are drop targets.
  * The payload is a custom dataTransfer type so only in-plugin drags land.
  */
-import { type DragEvent } from 'react';
+import { type DragEvent, type ReactNode } from 'react';
 import { type StateDotState } from '@deepseek-ai/dsh-client-ui-primitives';
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots';
 import type { CategoryNode, SessionNode, WorkspaceGroupNode } from './tree.ts';
@@ -52,7 +52,7 @@ export declare function CategoryRow({ node, t, onToggle, onRename, onDelete, dro
     onDragStartCategory?: (event: DragEvent) => void;
 } & RowDropProps): import("react").JSX.Element;
 /** One workspace folder row inside a category: draggable source + drop target. */
-export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDelete, canMoveOut, onMoveOut, flat, dropActive, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartExtra }: {
+export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDelete, canMoveOut, onMoveOut, onOpenInFolder, flat, dropActive, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartExtra }: {
     node: WorkspaceGroupNode;
     t: T;
     onToggle: () => void;
@@ -62,11 +62,28 @@ export declare function WorkspaceRow({ node, t, onToggle, onNewSession, onRename
     /** Project currently sits inside a group — offer "move out of group". */
     canMoveOut?: boolean;
     onMoveOut?: () => void;
+    /**
+     * Open the project directory in the host's file manager. Omitted when the
+     * host resolved no folder application (no capability, or a remote launch),
+     * which keeps the entry out of the menu entirely.
+     */
+    onOpenInFolder?: () => void;
     /** Render as a top-level row (no folder indentation). */
     flat?: boolean;
     /** Extra dragstart hook (e.g. collapse all expanded projects while dragging). */
     onDragStartExtra?: () => void;
 } & RowDropProps): import("react").JSX.Element;
+/**
+ * Children container for one folder's rows.
+ *
+ * Keeps the tree's `role="group"` semantics and gives the rows a single
+ * positioned ancestor. It used to draw a per-folder guide rail; that is now the
+ * flower branch's job (one continuous stem for the whole tree, see
+ * `FlowerBranch.tsx`), so this is structure only.
+ */
+export declare function TreeChildren({ children }: {
+    children: ReactNode;
+}): import("react").JSX.Element;
 /** One session leaf row. */
 export declare function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, onArchive }: {
     node: SessionNode;

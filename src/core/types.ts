@@ -1,5 +1,5 @@
 /**
- * Shared config types for dsh-workspace-groups. Pure types (zero runtime
+ * Shared config types for @dsh-xhl/workspace-groups. Pure types (zero runtime
  * deps) so both halves — the node half (sidecar YAML reading) and the
  * browser half (tree derivation) — compile against the same contract.
  */

@@ -10,7 +10,7 @@
  * unit tests exercise the real semantics without a browser module loader;
  * this file only binds them through defineStore.
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import {
   retainKeysImpl,
   setCategoryExpandedImpl,

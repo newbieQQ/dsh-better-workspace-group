@@ -32,6 +32,8 @@ export type WorkspaceGroupsKey =
   | 'workspace.renameConfirm'
   | 'workspace.renameCancel'
   | 'workspace.moveOutOfGroup'
+  | 'workspace.openInFolder'
+  | 'workspace.openInFolderError'
   | 'group.create'
   | 'group.createTitle'
   | 'group.createPlaceholder'
@@ -68,6 +70,21 @@ export type WorkspaceGroupsKey =
   | 'collapse'
   | 'expandMore'
   | 'newSession'
+  | 'quick.title'
+  | 'quick.tab.workspaces'
+  | 'quick.tab.sessions'
+  | 'quick.search.placeholder'
+  | 'quick.search.sessions'
+  | 'quick.empty.workspaces'
+  | 'quick.action.newSession'
+  | 'quick.action.running'
+  | 'quick.action.noneRunning'
+  | 'quick.empty.sessions'
+  | 'quick.select.hint'
+  | 'quick.hint'
+  | 'tabs.aria'
+  | 'tabs.close'
+  | 'tabs.archive'
 
 export type WorkspaceGroupsDict = LocaleDictOf<'workspaceGroups'>
 
@@ -99,6 +116,8 @@ export const zh: WorkspaceGroupsDict = {
   'workspace.renameConfirm': '重命名',
   'workspace.renameCancel': '取消',
   'workspace.moveOutOfGroup': '移出分组',
+  'workspace.openInFolder': '在文件夹中打开',
+  'workspace.openInFolderError': '打开文件夹失败',
   'group.create': '新建分组',
   'group.createTitle': '新建分组',
   'group.createPlaceholder': '分组名称',
@@ -135,6 +154,21 @@ export const zh: WorkspaceGroupsDict = {
   collapse: '折叠',
   expandMore: '展开全部',
   newSession: '新建会话',
+  'quick.title': '快速切换',
+  'quick.tab.workspaces': '工作区',
+  'quick.tab.sessions': '全部会话',
+  'quick.search.placeholder': '搜索工作区…',
+  'quick.search.sessions': '搜索会话…',
+  'quick.empty.workspaces': '没有匹配的工作区',
+  'quick.action.newSession': '新建会话',
+  'quick.action.running': '切到运行中的会话',
+  'quick.action.noneRunning': '没有正在运行的会话',
+  'quick.empty.sessions': '还没有会话',
+  'quick.select.hint': '在上方选择一个工作区',
+  'quick.hint': 'Ctrl+R 开关 · Enter 打开/新建 · Esc 关闭',
+  'tabs.aria': '已打开的会话',
+  'tabs.close': '关闭标签',
+  'tabs.archive': '归档',
 }
 
 /** English dictionary. */
@@ -165,6 +199,8 @@ export const en: WorkspaceGroupsDict = {
   'workspace.renameConfirm': 'Rename',
   'workspace.renameCancel': 'Cancel',
   'workspace.moveOutOfGroup': 'Move out of group',
+  'workspace.openInFolder': 'Open in folder',
+  'workspace.openInFolderError': 'Could not open the folder',
   'group.create': 'New group',
   'group.createTitle': 'New group',
   'group.createPlaceholder': 'Group name',
@@ -201,4 +237,19 @@ export const en: WorkspaceGroupsDict = {
   collapse: 'Collapse',
   expandMore: 'Show all',
   newSession: 'New Session',
+  'quick.title': 'Quick switch',
+  'quick.tab.workspaces': 'Workspaces',
+  'quick.tab.sessions': 'All sessions',
+  'quick.search.placeholder': 'Search workspaces…',
+  'quick.search.sessions': 'Search sessions…',
+  'quick.empty.workspaces': 'No matching workspaces',
+  'quick.action.newSession': 'New Session',
+  'quick.action.running': 'Switch to running session',
+  'quick.action.noneRunning': 'No running session',
+  'quick.empty.sessions': 'No sessions yet',
+  'quick.select.hint': 'Pick a workspace above',
+  'quick.hint': 'Ctrl+R toggle · Enter open/new · Esc close',
+  'tabs.aria': 'Open sessions',
+  'tabs.close': 'Close tab',
+  'tabs.archive': 'Archive',
 }

@@ -1,5 +1,5 @@
 /**
- * Runtime grouping overlay for dsh-workspace-groups: manual groups created in
+ * Runtime grouping overlay for @dsh-xhl/workspace-groups: manual groups created in
  * the sidebar UI and per-workspace category overrides. Stored in a plugin-
  * owned JSON sidecar (`$DSH_HOME/workspace-groups.manual.json`), separate from
  * the operator YAML — the YAML stays the rule source, this file only records
