@@ -1,25 +1,24 @@
 /**
- * The flower branch: an SVG overlay that draws one continuous curly stem down
- * the sidebar tree, growing to the row you are currently on.
+ * The flower marker: an SVG overlay that draws a single bloom on the row you are
+ * currently on.
  *
- * Ported from the RewampUI *Flower Sidebar* reference. The mechanism, verified
- * against that page's live DOM:
+ * Originally ported from the RewampUI *Flower Sidebar* reference, which drew a
+ * continuous curly stem down the whole tree — a dashed "ghost" route plus a
+ * solid stroke "grown" to the active row — with a dot on every row and the bloom
+ * at its tip. **The stem and the dots are gone**: they read as a stray black line
+ * down the sidebar, and depth is already carried by the row indentation. Only the
+ * bloom remains, still spinning while the current session works and resting when
+ * it is idle.
  *
- *   - TWO paths share one `d` prefix: a **ghost** (dashed, faded) drawing the
- *     whole route, and a **grown** solid stroke drawn only as far as the active
- *     row. The grown one is what makes the branch look like it grew to you.
- *   - A **dot per row**, sitting exactly on the curve.
- *   - A **flower at the endpoint**: the stem grows into a bloom on the row you
- *     are on, which is where the grown stroke stops. The bloom TURNS while that
- *     session is working and rests when it is idle.
- *   - The whole SVG is `pointer-events: none` and `overflow: visible`, so it is
- *     pure decoration over the real rows and never intercepts a click.
+ * The SVG is `pointer-events: none` and `overflow: visible`, so it is pure
+ * decoration over the real rows and never intercepts a click.
  *
  * Measurement, not layout: the rows are rendered by the tree itself (they carry
  * drag handlers, menus and hover state), so this component reads each row's
- * vertical centre from the DOM and feeds plain numbers to `buildBranch`. That
- * keeps the geometry unit-tested (`branch.ts`) while the SVG stays a dumb
- * renderer of it.
+ * vertical centre and anchor from the DOM and feeds plain numbers to
+ * `buildBranch`. That keeps the geometry unit-tested (`branch.ts`) while the SVG
+ * stays a dumb renderer of it — and leaves the branch math intact should the stem
+ * ever come back.
  *
  * Re-measured on: row count changes (expand/collapse, new session), the active
  * row changing, and container resize. A `ResizeObserver` on the scroll body
@@ -29,7 +28,7 @@
  * and is applied as a class, so a status flip never re-runs the DOM measurement
  * above (the tree is the expensive part, not the class swap).
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { buildBranch, type Branch, type BranchRow } from './branch.ts'
 
 /**
@@ -220,45 +219,26 @@ export function FlowerBranch({ scope, spinning }: { scope: HTMLElement | null; s
     }
   }, [scope])
 
-  // Dots are rendered from the measured rows; keep the memo keyed on identity so
-  // a re-render with the same branch does not rebuild the element list.
-  const dots = useMemo(() => branch?.dots ?? [], [branch])
-  // The endpoint dot gives way to the bloom.
-  const flowerKey = branch?.flower?.key
-
   if (branch === null || rows.length === 0) return null
+
+  // Only the bloom is drawn. The stem (ghost + grown stroke) and the per-row
+  // dots were removed on request: they read as a stray black line down the
+  // sidebar and the depth is already carried by the indentation, so the flower
+  // alone marks the row you are on. `branch` is still BUILT from the measured
+  // rows — it is what gives the bloom its position — but its path geometry is
+  // no longer rendered.
+  if (branch.flower === null) return null
 
   return (
     <svg
       className="wgBranch"
-      // The box covers the measured span; `overflow: visible` lets the kink draw
-      // outside it without clipping (the reference does the same).
       width={48}
       height={Math.max(1, Math.ceil(branch.height))}
       viewBox={`0 0 48 ${Math.max(1, Math.ceil(branch.height))}`}
       aria-hidden="true"
       focusable="false"
     >
-      <path className="wgBranchGhost" d={branch.ghostPath} />
-      <path className="wgBranchGrown" d={branch.grownPath} />
-      {dots.map(dot => {
-        // The bloom REPLACES the endpoint's dot rather than stacking on it: a
-        // dot left underneath would show through the petals' notches and read
-        // as a second, smaller flower.
-        if (dot.key === flowerKey) return null
-        return (
-          <circle
-            key={dot.key}
-            className={dot.active ? 'wgBranchDot wgBranchDotActive' : 'wgBranchDot'}
-            cx={dot.cx}
-            cy={dot.cy}
-            r={dot.active ? 3.2 : 2}
-          />
-        )
-      })}
-      {branch.flower !== null && (
-        <Flower cx={branch.flower.cx} cy={branch.flower.cy} spinning={spinning} />
-      )}
+      <Flower cx={branch.flower.cx} cy={branch.flower.cy} spinning={spinning} />
     </svg>
   )
 }

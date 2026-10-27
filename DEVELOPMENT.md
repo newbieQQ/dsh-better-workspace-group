@@ -58,7 +58,7 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 | `tree.ts` | 纯派生：分类文件夹 → 项目文件夹 → 会话行；可见性规则对齐官方树 |
 | `locales.ts` | `workspaceGroups` 命名空间词典（zh/en + key 联合类型） |
 | `styles.css` | 全部样式，`?inline` 导入后由构建期 lightningcss 压缩内联 |
-| `branch.ts` / `FlowerBranch.tsx` | 侧栏「花枝」SVG 曲线（移植自 RewampUI Flower Sidebar） |
+| `branch.ts` / `FlowerBranch.tsx` | 侧栏当前行的「花朵」标记（几何计算在 `branch.ts`，仍由单测覆盖；连线与逐行圆点已移除，只画花朵） |
 | `tabs.ts` | 标签条**纯**状态：打开顺序、激活项、派生展示 |
 | `tab-store.ts` | `defineStore` 绑定（只做绑定，变换留在 `tabs.ts`） |
 | `tab-seat.ts` | DOM 挂载点：标签条要贴在会话列顶部（ui-layout `AppFrame` 的 `.centerCol` 是 `pI_x6G_centerCol`，没有对应 slot） |

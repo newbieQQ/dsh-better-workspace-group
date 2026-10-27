@@ -303,6 +303,8 @@
   position:relative;
 }
 
+/* The flower overlay holds only the bloom now; the stem and per-row dots were
+   removed, so no stroke rules live here any more. */
 .wgBranch {
   z-index:2;
   pointer-events:none;
@@ -314,7 +316,7 @@
 }
 
 /* Disclosure animation moves rows before FlowerBranch re-measures: hide the
-   vine overlay while any RowGroup animates so the stem never lags behind. */
+   bloom while any RowGroup animates so it never lags behind its row. */
 .wgTreeWrap:has([data-wg-animating]) .wgBranch {
   opacity:0;
 }
@@ -322,32 +324,6 @@
 .wgTreeWrap>.wgList {
   z-index:1;
   position:relative;
-}
-
-.wgBranchGhost {
-  fill:none;
-  stroke:var(--dsw-alias-border-l2,#7f7f7f47);
-  stroke-width:1.5px;
-  stroke-dasharray:2 3;
-  vector-effect:non-scaling-stroke;
-}
-
-.wgBranchGrown {
-  fill:none;
-  stroke:var(--dsw-alias-label-primary,currentColor);
-  stroke-width:2px;
-  stroke-linecap:round;
-  vector-effect:non-scaling-stroke;
-  transition:stroke .16s;
-}
-
-.wgBranchDot {
-  fill:var(--dsw-alias-border-l2,#7f7f7f80);
-  transition:r .16s,fill .16s;
-}
-
-.wgBranchDotActive {
-  fill:var(--dsw-alias-label-primary,currentColor);
 }
 
 .wgFlowerArt {
@@ -365,7 +341,7 @@
 }
 
 @media (prefers-reduced-motion:reduce) {
-  .wgBranchGrown,.wgBranchDot{transition:none}.wgFlowerArt{animation:none}.wgRowsOpening,.wgRowsClosing{animation:none}.wgBranch{transition:none};
+  .wgFlowerArt{animation:none}.wgRowsOpening,.wgRowsClosing{animation:none}.wgBranch{transition:none};
 }
 
 /* Animated disclosure body (RowGroup): 0fr ↔ 1fr interpolates the row box

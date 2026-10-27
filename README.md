@@ -73,9 +73,9 @@
   erroring, so data and client versions can move independently
 - **Pin groups**: pinned groups sort to the front of the tree; dragging a group across the pin
   boundary re-pins it in the same write, so the drop lands where the indicator showed it
-- **Animated folding**: expanding/collapsing a group or project animates rows and fades the
-  flower-branch overlay while they move, so the vine never drifts; animation is skipped for
-  large subtrees, during drag folding, and under `prefers-reduced-motion`
+- **Animated folding**: expanding/collapsing a group or project animates rows and hides the
+  flower marker while they move, so the bloom never lags behind its row; animation is
+  skipped for large subtrees, during drag folding, and under `prefers-reduced-motion`
 - Stored in the overlay's `appearance` map — **never in the rule YAML** (see below)
 
 ### Search & operations
