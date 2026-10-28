@@ -88,26 +88,32 @@
   overflow-y:auto;
 }
 
-/* Pinned default workspace: a sibling of the tree's scroll area, never inside
-   it — a long session list scrolls above this bar and can neither push it away
-   nor scroll it out. The divider separates the two zones. */
 /* Bottom dock: the "not classified yet" bucket and the Host default workspace
    sit outside the tree's scroll area, so a long session list can never push
    them away. The dock owns the divider against the tree; the default-workspace
-   bar adds a second one only when the bucket sits above it. */
+   bar adds a second one only when the bucket sits above it.
+   The dock is a bounded, opaque panel: it may shrink (never grow past its cap),
+   clips its own overflow, and scrolls its expanded session list internally — so
+   an expanded default workspace can never be cut off mid-row by the sidebar's
+   bottom edge, and nothing from the tree ever shows through it. */
 .wgDock {
-  flex:none;
+  flex:0 1 auto;
   min-width:0;
+  min-height:0;
+  max-height:min(62vh,560px);
   display:flex;
   flex-direction:column;
+  overflow:hidden;
   border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f47);
+  background:var(--dsw-bg-1,transparent);
 }
 
 /* The docked bucket scrolls on its own and never grows past a fixed share of
    the sidebar: a big "not classified yet" pile must not swallow the tree. */
 .wgDockBucket {
-  flex:none;
+  flex:0 1 auto;
   min-width:0;
+  min-height:0;
   max-height:min(240px,38vh);
   padding:4px 8px 0;
   overflow-x:hidden;
@@ -123,12 +129,25 @@
 }
 
 .wgDefaultWorkspaceBar {
-  flex:none;
+  flex:1 1 auto;
   min-width:0;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
   padding:6px 8px 8px;
 }
 
+/* The workspace row stays put; its expanded sessions scroll under it. */
+.wgDockSessions {
+  flex:1 1 auto;
+  min-width:0;
+  min-height:0;
+  overflow-x:hidden;
+  overflow-y:auto;
+}
+
 .wgDefaultWorkspaceBar .wgProjectRow {
+  flex:none;
   margin-bottom:2px;
 }
 

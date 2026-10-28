@@ -61,13 +61,16 @@ assert.ok(!rule('.wgIconGrid').includes('max-height:'), 'the scroll box moved fr
 
 // D. The bottom dock (not-classified bucket + pinned default workspace) is a
 // sibling of the scrolling tree, so a long session list can never scroll it
-// away. The dock owns the divider; the bucket scrolls inside a capped box.
+// away. The dock is bounded and clips its own overflow; the bucket and the
+// expanded default-workspace list scroll inside it.
 const dock = rule('.wgDock')
 assert.ok(dock.includes('border-top:'), 'the dock is separated from the tree')
-assert.ok(dock.includes('flex:none;'), 'the dock must not be squeezed by the tree')
+assert.ok(dock.includes('max-height:') && dock.includes('overflow:hidden;'), 'the dock is capped and clips its own overflow')
+assert.ok(dock.includes('background:'), 'the dock paints an opaque surface')
 const bucket = rule('.wgDockBucket')
 assert.ok(bucket.includes('overflow-y:auto;') && bucket.includes('max-height:'), 'a long bucket scrolls on its own')
-assert.ok(rule('.wgDefaultWorkspaceBar').includes('flex:none;'), 'the default-workspace row must not be squeezed by the tree')
+assert.ok(rule('.wgDockSessions').includes('overflow-y:auto;'), 'an expanded default workspace scrolls inside the dock')
+assert.ok(rule('.wgDefaultWorkspaceBar .wgProjectRow').includes('flex:none;'), 'the default-workspace row itself never shrinks or scrolls')
 
 // E. The markup backs the CSS: every row hands its rest-state label (member
 // count or session time) AND its buttons to the one trailing slot, so both right

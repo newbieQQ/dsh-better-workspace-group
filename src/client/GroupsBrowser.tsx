@@ -1651,23 +1651,25 @@ export function GroupsBrowser({
                   : {})}
                 onManageFolders={() => { setFoldersTarget(defaultBarNode.workspaceId) }}
               />
-              <WorkspaceSubtree
-                workspace={defaultBarNode}
-                current={current}
-                now={now}
-                t={t}
-                animate={dragging === null}
-                onOpen={open}
-                onSessionRename={onSessionRename}
-                onSessionArchive={onSessionArchive}
-                onFork={forkSession}
-                onToggleFolder={toggleFolder}
-                onFolderNewSession={startSessionInFolder}
-                onFolderSetRoot={setFolderRoot}
-                onFolderRemove={removeFolderFrom}
-                onOpenFolderPath={openFolderPath}
-                creatingFolderKey={creatingSessionIn}
-              />
+              <div className="wgDockSessions">
+                <WorkspaceSubtree
+                  workspace={defaultBarNode}
+                  current={current}
+                  now={now}
+                  t={t}
+                  animate={dragging === null}
+                  onOpen={open}
+                  onSessionRename={onSessionRename}
+                  onSessionArchive={onSessionArchive}
+                  onFork={forkSession}
+                  onToggleFolder={toggleFolder}
+                  onFolderNewSession={startSessionInFolder}
+                  onFolderSetRoot={setFolderRoot}
+                  onFolderRemove={removeFolderFrom}
+                  onOpenFolderPath={openFolderPath}
+                  creatingFolderKey={creatingSessionIn}
+                />
+              </div>
             </div>
           )}
         </div>

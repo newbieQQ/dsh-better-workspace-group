@@ -59,11 +59,16 @@ const block = (selector) => {
   return css.slice(start, css.indexOf('}', start))
 }
 assert.match(block('.wgDock'), /border-top:1px solid/, 'the dock draws the divider against the tree')
-assert.match(block('.wgDock'), /flex:none/, 'the dock never scrolls with the tree')
+assert.match(block('.wgDock'), /max-height:min\(62vh,560px\)/, 'the dock is capped so the tree always keeps room')
+assert.match(block('.wgDock'), /overflow:hidden/, 'the dock clips its own overflow instead of painting over the tree')
+assert.match(block('.wgDock'), /background:var\(--dsw-bg-1,transparent\)/, 'the dock paints an opaque surface so nothing shows through')
 assert.match(block('.wgDockBucket'), /overflow-y:auto/, 'a long bucket scrolls on its own')
 assert.match(block('.wgDockBucket'), /max-height:min\(240px,38vh\)/, 'the bucket is capped so it cannot swallow the tree')
+assert.match(block('.wgDockSessions'), /overflow-y:auto/, 'an expanded default workspace scrolls inside the dock')
+assert.match(block('.wgDockSessions'), /min-height:0/, 'the session list may shrink so nothing is cut off mid-row')
 assert.match(css, /\.wgDockBucket \+ \.wgDefaultWorkspaceBar \{[^}]*border-top:1px solid/, 'a separator sits between the bucket and the default-workspace row')
 assert.match(css, /\.wgRail \.wgDock \{\s*display:none;/, 'the rail never shows the dock')
 assert.doesNotMatch(block('.wgDefaultWorkspaceBar'), /border-top/, 'the bar itself no longer draws a duplicate divider')
+assert.match(browser, /className="wgDockSessions"/, 'the expanded sessions are wrapped in the dock scroll area')
 
 console.log('Dock contracts passed: bucket predicate, render wiring and stylesheet.')
