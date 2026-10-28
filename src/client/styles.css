@@ -99,9 +99,10 @@
 .wgDock {
   flex:0 1 auto;
   min-width:0;
-  /* Never shrink below the dock's own rows: a clipped row would look like an
-     overlap. The session list is the only child allowed to give up height. */
-  min-height:min-content;
+  /* A plain pixel floor (bucket row + workspace row + padding). A content-based
+     floor would outweigh max-height, letting the dock grow to the whole session
+     list and swallow the tree, so the floor stays a fixed length. */
+  min-height:84px;
   max-height:min(62vh,560px);
   display:flex;
   flex-direction:column;
@@ -109,13 +110,13 @@
   border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f47);
 }
 
-/* The docked bucket never gives up height to the expanded session list (a
-   squeezed bucket would clip its own row in half); it scrolls on its own past a
-   fixed share of the sidebar so a big pile cannot swallow the tree. */
+/* The docked bucket gives up height only down to one full row, never below it
+   (a shorter bucket would clip its own row in half); past its cap it scrolls,
+   so a big pile cannot swallow the tree. */
 .wgDockBucket {
-  flex:0 0 auto;
+  flex:0 1 auto;
   min-width:0;
-  min-height:0;
+  min-height:32px;
   max-height:min(240px,38vh);
   padding:4px 8px 0;
   overflow-x:hidden;
@@ -136,6 +137,7 @@
   min-height:0;
   display:flex;
   flex-direction:column;
+  overflow:hidden;
   padding:6px 8px 8px;
 }
 
