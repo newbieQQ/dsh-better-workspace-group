@@ -27,6 +27,15 @@ export declare function defaultRemoteMirrorBase(): string;
  * @param path - candidate path.
  */
 export declare function isAbsoluteFolderPath(path: string): boolean;
+/** Validate a local path for the read-only remote hint endpoint. */
+export declare function validateRemoteHintPath(path: unknown): string;
+/**
+ * Presence-only safety hint, never a trusted SSH connection or registration.
+ * lstat also treats dangling symlinks as hints without reading their targets.
+ * Only ENOENT is ignored: permissions and all other inspection failures must
+ * prevent callers from silently falling back to local operations.
+ */
+export declare function hasRemoteMarkerHint(path: string): Promise<boolean>;
 /**
  * Tolerant reader: shape-normalizes whatever was on disk and drops unusable
  * workspaces, folders and roots instead of throwing. A missing, non-mapping or
@@ -58,24 +67,6 @@ export declare function readFoldersDocument(path: string): Promise<FoldersDocume
  * @param document - validated document to persist.
  */
 export declare function writeFoldersDocument(path: string, document: FoldersDocument): Promise<void>;
-/** Connection record of the remote-ssh plugin at a mirror root. */
-export declare const REMOTE_MARKER_FILE_NAME = ".remote-ssh.json";
-/** The subset of that record this plugin needs to reproduce it. */
-export interface RemoteMarker {
-    readonly profileId?: string;
-    readonly host: string;
-    readonly port: number;
-    readonly user: string;
-    readonly keyPath?: string;
-    readonly proxyJump?: string;
-    readonly remotePath: string;
-}
-/**
- * Read the remote-ssh connection record of a directory.
- * @param dir - directory that may hold the record (a mirror root, usually).
- * @returns the record, or null when the directory is not remote-backed.
- */
-export declare function readRemoteMarker(dir: string): Promise<RemoteMarker | null>;
 /**
  * Join a remote path with a mirror-relative subpath.
  *
@@ -86,18 +77,3 @@ export declare function readRemoteMarker(dir: string): Promise<RemoteMarker | nu
  * @returns the remote counterpart, or null for an empty or escaping subpath.
  */
 export declare function remoteSubpath(remotePath: string, relativePath: string): string | null;
-/**
- * Stamp the remote-ssh connection record into a subdirectory of a mirror, so
- * that sessions started there keep a remote terminal (see the block comment).
- *
- * A workspace that is not remote-backed is left untouched: no record at the
- * workspace root means the plugin has nothing to reproduce.
- * @param workspacePath - the workspace's canonical directory (the mirror root).
- * @param folderPath - subdirectory added as an extra folder.
- * @returns `{ marked: false }` for a local workspace, otherwise the remote path
- * written into the subdirectory record.
- */
-export declare function ensureRemoteMarker(workspacePath: string, folderPath: string): Promise<{
-    marked: boolean;
-    remotePath?: string;
-}>;

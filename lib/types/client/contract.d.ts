@@ -7,6 +7,8 @@
  * self-contained via `pickDirectory` — and no locale-keyed naming collision.
  */
 import type { HostObservable, InjectFace, PropsLocale, PropsRuntime, PropsStore, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots';
+import type { ComponentType } from 'react';
+import type { DirectoryFlowOwnerProps } from '@deepseek-ai/dsh-client-ui-workspace/client';
 import type { SessionId } from '@deepseek-ai/dsh-session/types';
 import type { SessionListState, SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client';
 import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client';
@@ -64,6 +66,13 @@ export type GroupsBrowserInjected = {
     }) => Promise<WorkspaceView>;
     /** Ask the local Host to open its native single-directory chooser (self-contained Add Workspace). */
     pickDirectory: () => Promise<string | null>;
+    /** Snapshot a self-contained standard picker without redeclaring its owned slot. */
+    getDirectoryFlow: () => {
+        component: ComponentType<DirectoryFlowOwnerProps>;
+        injected: Record<string, unknown>;
+    } | null;
+    /** DSH native local directory creation (SSH routing is owned by our adapter). */
+    createDirectory: (path: string, name: string) => Promise<string>;
     /**
      * Surface the session-tab strip for a session that is in play (called with the
      * session the browser itself just opened, and again whenever its status

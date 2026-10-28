@@ -94,17 +94,24 @@
   clicking it twice reuses the blank session instead of stacking empty ones
 - Folders start expanded, so attaching one never hides sessions that were already visible;
   collapse state is per-view and intentionally not persisted
-- **Remote (SSH) projects are mirror-backed**: `@zhangfengshun/dsh-remote-ssh` registers a
-  remote workspace as an ordinary workspace whose directory is a LOCAL mirror
-  (`<home>/.dsh/remote-workspaces/<workspaceId>`) of the remote root. For those projects the
-  dialog swaps the folder picker for a **relative-path field**, so an extra folder is always a
-  subdirectory of that mirror — i.e. a directory that also exists on the server. Picking an
-  unrelated local directory is refused, because a session there would never sync: a separate
-  remote root should be its own workspace (add it with the SSH plugin), grouped next to this one
-- Such an extra folder gets a **`.remote-ssh.json` stamped into it** (same connection record,
-  `remotePath` pointing at the matching remote subdirectory). The SSH plugin reads that record at
-  the session cwd only, never walking up, so without it a session in the subdirectory would fall
-  back to a LOCAL terminal. The file is always excluded from sync, so it never reaches the server
+- **Unified Create folder**: enter one child name in either workspace type. Local workspaces
+  call DSH `uiWorkspace.createDirectory`; registered SSH mirrors call the SSH-owned
+  `/remote-ssh/api/mkdir` with the profile and mapped remote path. SSH is optional for local use.
+  Remote mkdir is recursive/idempotent (existing remote directories are reused), unlike the
+  native local operation. Failures do not fall back to creating local mirror directories.
+- SSH recognition uses `listWorkspaces`, including non-default mirror locations. A missing
+  plugin or unregistered default mirror fails closed; malformed catalogs and overlapping roots
+  are rejected. The existing local folder picker remains available for attaching local folders.
+- **SSH subdirectory sessions are not fully supported by remote-ssh 2.4.40**. Creation is
+  blocked with an explanation; open a session at the registered remote workspace root instead.
+  A separate remote root should be registered through the SSH plugin. Folder creation itself
+  does not create or change any SSH registration.
+- **No child `.remote-ssh.json` is written**. The old marker POST returns 410. Child markers do
+  not establish model-tool context and can bypass parent write-back exclusions. Previously
+  created markers are NOT automatically deleted; review them before using old subdirectory
+  sessions. Root SSH markers remain owned by the SSH plugin.
+- Verification uses mocked APIs plus host route fixtures; live SSH/terminal/UI behavior still
+  requires an integration test before publishing.
 
 ### Search & operations
 - **Tree-shaped search**: results keep the three-level structure (category → project → matched

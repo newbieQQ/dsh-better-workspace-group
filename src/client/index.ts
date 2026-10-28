@@ -58,6 +58,7 @@ import { loadTabs, saveTabs } from './tab-persist.ts'
 import { createStoreHook } from './store-hook.ts'
 import { shouldOpenTab, type TabOpenMode } from './tabs.ts'
 import { GroupsBrowser } from './GroupsBrowser.tsx'
+import { directoryFlowFromEntry } from './directory-flow.ts'
 import { en, zh, type WorkspaceGroupsKey } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -193,6 +194,10 @@ export function apply(ctx: Context): void {
       // resolves).
     },
     pickDirectory: () => ctx.uiWorkspace.pickDirectory(),
+    // Our shadow entry cannot own/render the official browser's child slot.
+    // Reuse the elected self-contained picker and its actual injected services.
+    getDirectoryFlow: () => directoryFlowFromEntry(ctx.slots.entriesOfSlot('sidebar.workspaces.directoryFlow')[0]),
+    createDirectory: (path, name) => ctx.uiWorkspace.createDirectory(path, name),
     searchSessions,
     searchResultLimit: ctx.sessions.searchResultLimit,
     // Directory-flow hole occupancy. The official ui-workspace browser gates

@@ -17,9 +17,11 @@
  * - `PUT /workspace-groups/folders` — replace the folder overlay whole.
  *   Strictly validated (absolute paths, no duplicates, root membership) and
  *   written atomically; the saved document is echoed back.
- * - `POST /workspace-groups/folders` — stamp the remote-ssh connection record
- *   into an extra folder of a mirror workspace, so sessions started there keep
- *   a remote terminal (see the mirror block comment in host-folders.ts).
+ * - `POST /workspace-groups/folders` — deprecated; returns 410 without reading
+ *   the payload or touching remote-ssh records.
+ *
+ * - `GET /workspace-groups/remote-hint?path=...` — presence-only marker hint
+ *   at the requested absolute path or ancestors; never returns marker content.
  *
  * Core workspace.json / session storage is never touched.
  */
@@ -45,9 +47,10 @@ import {
 import {
   defaultFoldersPath,
   defaultRemoteMirrorBase,
-  ensureRemoteMarker,
+  hasRemoteMarkerHint,
   readFoldersDocument,
   validateFoldersDocument,
+  validateRemoteHintPath,
   writeFoldersDocument,
 } from './host-folders.ts'
 
@@ -250,6 +253,39 @@ export function apply(ctx: GroupsContext): void {
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
+    path: '/workspace-groups/remote-hint',
+    handler: async (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        writeError(res, 405, 'method not allowed')
+        return
+      }
+      let path: string
+      try {
+        const url = new URL(req.url ?? '', 'http://localhost')
+        path = validateRemoteHintPath(url.searchParams.get('path'))
+      } catch {
+        writeError(res, 400, 'workspace-groups: invalid remote hint path')
+        return
+      }
+      let remoteHint: boolean
+      try {
+        remoteHint = await hasRemoteMarkerHint(path)
+      } catch {
+        writeError(res, 500, 'workspace-groups: failed to inspect remote hint; local fallback is unsafe')
+        return
+      }
+      const body = JSON.stringify({ remoteHint })
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Content-Length': Buffer.byteLength(body),
+      })
+      res.end(req.method === 'HEAD' ? undefined : body)
+    },
+  }), '@dsh-xhl/workspace-groups: /workspace-groups/remote-hint route')
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
     path: '/workspace-groups/folders',
     handler: async (req, res) => {
       if (req.method === 'GET' || req.method === 'HEAD') {
@@ -268,40 +304,9 @@ export function apply(ctx: GroupsContext): void {
         return
       }
       if (req.method === 'POST') {
-        // `{ workspacePath, folderPath }` → stamp the remote-ssh connection
-        // record into an extra folder of a MIRROR workspace. The client sends
-        // this right after adding such a folder: remote-ssh reads the record at
-        // the session cwd (it never walks up), so without it a session started
-        // in `<mirror>/sub` would silently get a local terminal.
-        let raw: unknown
-        try {
-          raw = JSON.parse(await readBody(req, MAX_MANUAL_BODY_BYTES))
-        } catch (error) {
-          const status = error instanceof HttpError ? error.status : 400
-          writeError(res, status, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
-          return
-        }
-        const payload = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
-        const workspacePath = typeof payload.workspacePath === 'string' ? payload.workspacePath.trim() : ''
-        const folderPath = typeof payload.folderPath === 'string' ? payload.folderPath.trim() : ''
-        if (workspacePath === '' || folderPath === '') {
-          writeError(res, 400, 'workspace-groups: workspacePath and folderPath are required')
-          return
-        }
-        let result: { marked: boolean; remotePath?: string }
-        try {
-          result = await ensureRemoteMarker(workspacePath, folderPath)
-        } catch (error) {
-          writeError(res, 400, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
-          return
-        }
-        const marked = JSON.stringify(result)
-        res.writeHead(200, {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Length': Buffer.byteLength(marked),
-        })
-        res.end(marked)
+        // Child markers neither register model-tool context nor preserve the
+        // parent's writeBack guard. Never read, write or remove any marker.
+        writeError(res, 410, 'workspace-groups: remote marker creation is deprecated; use the registered remote workspace root')
         return
       }
       if (req.method !== 'PUT') {

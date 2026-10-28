@@ -50,10 +50,13 @@ export declare function CategoryGlyph({ icon, fallback }: {
  * groups via overlay renames/hides), draggable source for group reorder and
  * drop target for both workspace moves and group reorders.
  */
-export declare function CategoryRow({ node, t, onToggle, onRename, onDelete, onTogglePin, onEditAppearance, dropActive, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartCategory }: {
+export declare function CategoryRow({ node, t, onToggle, onAddWorkspace, addingWorkspace, onRename, onDelete, onTogglePin, onEditAppearance, dropActive, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartCategory }: {
     node: CategoryNode;
     t: T;
     onToggle: () => void;
+    /** Create and assign a workspace directly to this category. */
+    onAddWorkspace?: () => void;
+    addingWorkspace?: boolean;
     /** Rename/delete actions; the hover menu renders only when both provided. */
     onRename?: () => void;
     onDelete?: () => void;

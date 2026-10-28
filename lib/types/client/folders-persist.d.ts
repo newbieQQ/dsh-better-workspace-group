@@ -42,18 +42,3 @@ export declare function loadFolders(fetchImpl?: typeof fetch): Promise<FoldersSn
  * @param fetchImpl - fetch implementation (injectable for tests).
  */
 export declare function saveFolders(document: FoldersDocument, fetchImpl?: typeof fetch): Promise<void>;
-/**
- * Ask the host to stamp the remote-ssh connection record into an extra folder of
- * a MIRROR workspace.
- *
- * remote-ssh decides "remote backed" by reading `.remote-ssh.json` at the
- * session cwd and never walks up, so a folder below the mirror root would
- * otherwise get a local terminal. Best-effort: the folder itself is already
- * persisted by the time this runs, and a local workspace answers `marked:false`
- * (nothing to stamp) rather than failing.
- * @param workspacePath - the workspace's canonical directory (mirror root).
- * @param folderPath - the extra folder just added.
- * @param fetchImpl - fetch implementation (injectable for tests).
- * @returns true when a record was written.
- */
-export declare function ensureRemoteFolderMarker(workspacePath: string, folderPath: string, fetchImpl?: typeof fetch): Promise<boolean>;

@@ -18,12 +18,25 @@
  *
  * Types ship from lib/types (tsc -p tsconfig.build.json), not from tsdown.
  */
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve as resolvePath, isAbsolute } from 'node:path'
-import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { builtinModules } from 'node:module'
 import type { UserConfig } from 'tsdown'
 import { transform } from 'lightningcss'
+
+/**
+ * The client bundle banner MUST register under the package name: client-modules
+ * keys its graph rows by package name, so a banner id that differs makes the
+ * row look unregistered (the row is then re-fetched, hits `register()` a second
+ * time and throws "duplicate factory registration", failing the whole boot).
+ * Read the name instead of hardcoding it — the package has been renamed once
+ * already (`@dsh-xhl/workspace-groups` -> `workspace-groups-local`).
+ */
+const PACKAGE_NAME: string = (
+  JSON.parse(readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')) as { name: string }
+).name
 
 /** Node builtins must never survive into the browser module-loader factory. */
 const NODE_BUILTINS = new Set([
@@ -147,7 +160,7 @@ function clientConfig(): UserConfig {
     ],
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: `window.__ModuleLoader__.load({ id: "@dsh-xhl/workspace-groups", factory: (require) => {`,
+      banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PACKAGE_NAME)}, factory: (require) => {`,
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
     },

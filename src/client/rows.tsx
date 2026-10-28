@@ -167,10 +167,13 @@ export function CategoryGlyph({ icon, fallback = null }: { icon: string | undefi
  * groups via overlay renames/hides), draggable source for group reorder and
  * drop target for both workspace moves and group reorders.
  */
-export function CategoryRow({ node, t, onToggle, onRename, onDelete, onTogglePin, onEditAppearance, dropActive = false, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartCategory }: {
+export function CategoryRow({ node, t, onToggle, onAddWorkspace, addingWorkspace = false, onRename, onDelete, onTogglePin, onEditAppearance, dropActive = false, insertLine, onRowDragOver, onRowDragLeave, onRowDrop, onDragStartCategory }: {
   node: CategoryNode
   t: T
   onToggle: () => void
+  /** Create and assign a workspace directly to this category. */
+  onAddWorkspace?: () => void
+  addingWorkspace?: boolean
   /** Rename/delete actions; the hover menu renders only when both provided. */
   onRename?: () => void
   onDelete?: () => void
@@ -235,6 +238,16 @@ export function CategoryRow({ node, t, onToggle, onRename, onDelete, onTogglePin
       {pinned && (
         <span className="wgCategoryPin" aria-hidden>
           <IconPinFillMedium />
+        </span>
+      )}
+      {onAddWorkspace !== undefined && (
+        <span className="wgRowActions">
+          <button type="button" className="wgIconButton" draggable={false}
+            disabled={addingWorkspace}
+            title={t('workspace.add')} aria-label={`${t('workspace.add')} · ${node.label}`}
+            onClick={event => { event.stopPropagation(); onAddWorkspace() }}>
+            <IconPlusOutlineRegular />
+          </button>
         </span>
       )}
       {manageable && (

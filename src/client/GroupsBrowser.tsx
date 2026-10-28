@@ -55,8 +55,9 @@ import type { GroupsBrowserProps } from './contract.ts'
 import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, UNCATEGORIZED_KEY, type CategoryNode, type WorkspaceGroupNode } from './tree.ts'
 import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
-import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, isUnderBase, joinSubpath, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
-import { ensureRemoteFolderMarker, loadFolders, saveFolders } from './folders-persist.ts'
+import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, isUnderBase, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
+import { loadFolders, saveFolders } from './folders-persist.ts'
+import { createWorkspaceDirectory, remoteFolderWorkspace } from './folder-directory.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
@@ -219,6 +220,8 @@ export function GroupsBrowser({
   insertSessionBefore,
   createWorkspace,
   pickDirectory,
+  getDirectoryFlow,
+  createDirectory,
   searchSessions,
   searchResultLimit,
   openTab,
@@ -283,6 +286,7 @@ export function GroupsBrowser({
   const [collapsedFolderKeys, setCollapsedFolderKeys] = useState<readonly string[]>([])
   const [foldersTarget, setFoldersTarget] = useState<WorkspaceId | null>(null)
   const [foldersBusy, setFoldersBusy] = useState(false)
+  const createdFolderPendingSave = useRef<{ workspaceId: WorkspaceId; name: string; path: string } | null>(null)
   const [creatingSessionIn, setCreatingSessionIn] = useState<string | null>(null)
   // Local mirror root of the remote-ssh plugin, as reported by the host. A
   // project whose directory lives below it is a REMOTE workspace: its folder is
@@ -458,19 +462,71 @@ export function GroupsBrowser({
   // appends to the end of the list. No whole-area highlight box.
   const topLevelRef: DropRowRef = { kind: 'topLevel', key: UNCATEGORIZED_KEY }
 
-  // Add workspace flow: self-contained (no directory-flow hole dependency).
+  // Use the elected standard flow, including remote-ssh's local/remote picker.
+  const [directoryFlowOpen, setDirectoryFlowOpen] = useState(false)
+  const [directoryFlow, setDirectoryFlow] = useState<ReturnType<GroupsBrowserProps['getDirectoryFlow']>>(null)
+  const DirectoryFlow = directoryFlow?.component
+  const directoryRequest = useRef<{
+    resolve: (path: string | null) => void
+    reject: (error: Error) => void
+  } | null>(null)
+  const finishDirectoryFlow = (path: string | null, error?: string): void => {
+    const pending = directoryRequest.current
+    directoryRequest.current = null
+    setDirectoryFlowOpen(false)
+    if (error !== undefined) pending?.reject(new Error(error))
+    else pending?.resolve(path)
+  }
+  useEffect(() => () => {
+    directoryRequest.current?.resolve(null)
+    directoryRequest.current = null
+  }, [])
+  const pickWorkspaceDirectory = (): Promise<string | null> => {
+    const flow = getDirectoryFlow()
+    if (!flow) return pickDirectory()
+    if (directoryRequest.current) return Promise.resolve(null)
+    setDirectoryFlow(flow)
+    return new Promise((resolve, reject) => {
+      directoryRequest.current = { resolve, reject }
+      setDirectoryFlowOpen(true)
+    })
+  }
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [addErrorOpen, setAddErrorOpen] = useState(false)
-  const addWorkspace = async (): Promise<void> => {
-    if (adding) return
+  const addCategoryRef = useRef<string | undefined>(undefined)
+  const currentGrouping = useRef({ manual, groups, manualSaving })
+  currentGrouping.current = { manual, groups, manualSaving }
+  const addWorkspace = async (categoryKey?: string): Promise<void> => {
+    if (adding || manualSaving) return
+    addCategoryRef.current = categoryKey
     setAdding(true)
     setAddError(null)
     setAddErrorOpen(false)
     try {
-      const path = await pickDirectory()
+      const path = await pickWorkspaceDirectory()
       if (path === null) return // cancelled
       const workspace = await createWorkspace({ path })
+      if (categoryKey !== undefined) {
+        // Use the returned ID: the workspace observable may not have caught up yet.
+        const latest = currentGrouping.current
+        if (latest.manualSaving || !latest.groups.some(group => group.key === categoryKey)) {
+          throw new Error('The group changed while adding the workspace. Please retry from the target group.')
+        }
+        const workspaceId = workspace.workspaceId as string
+        const workspaceOrder = Object.fromEntries(Object.entries(latest.manual.workspaceOrder)
+          .map(([key, ids]) => [key, ids.filter(id => id !== workspaceId)]))
+        workspaceOrder[categoryKey] = [...(workspaceOrder[categoryKey] ?? []), workspaceId]
+        const next = { ...latest.manual, assignments: { ...latest.manual.assignments, [workspaceId]: categoryKey }, workspaceOrder }
+        setManualSaving(true)
+        try {
+          await saveManualOverlay(next)
+          setManual(next)
+          actions.setCategoryExpanded(categoryKey, true)
+        } finally {
+          setManualSaving(false)
+        }
+      }
       startSession(workspace.workspaceId)
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason)
@@ -624,14 +680,19 @@ export function GroupsBrowser({
     // native picker would happily return an unrelated local directory that has
     // no remote counterpart, so that path is closed off here and the dialog
     // takes a subpath instead.
-    if (isRemoteWorkspace(workspace)) {
-      notifyFolder(t('folder.remoteNeedsSubpath'))
-      return
-    }
     setFoldersBusy(true)
     try {
+      if (foldersRemoteBase === null) throw new Error(t('folder.notReady'))
+      if (await remoteFolderWorkspace(workspace.path, foldersRemoteBase)) {
+        notifyFolder(t('folder.remoteNeedsSubpath'))
+        return
+      }
       const path = await pickDirectory()
       if (path === null) return // cancelled
+      if (await remoteFolderWorkspace(path, foldersRemoteBase)) {
+        notifyFolder(t('folder.remoteNeedsSubpath'))
+        return
+      }
       const entry = entryFor(foldersDoc, workspaceId as string)
       if (effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))) {
         notifyFolder(t('folder.duplicate'))
@@ -646,31 +707,33 @@ export function GroupsBrowser({
     }
   }
 
-  /**
-   * Add a folder to a REMOTE workspace by typing a path relative to its mirror.
-   * The mirror is a copy of the remote root, so `<mirror>/sub` and remote `sub`
-   * are the same directory — that is the only way an extra folder can mean
-   * something on both sides.
-   */
-  const addSubpathTo = (workspaceId: WorkspaceId, relative: string): void => {
-    if (foldersBusy) return
+  /** The same gesture routes through native local or SSH-owned mkdir APIs. */
+  const addSubpathTo = async (workspaceId: WorkspaceId, name: string): Promise<boolean> => {
+    if (foldersBusy) return false
     const workspace = workspaces.find(w => w.workspaceId === workspaceId)
-    if (workspace === undefined) return
-    const path = joinSubpath(workspace.path, relative)
-    if (path === null) {
-      notifyFolder(t('folder.subpathInvalid'))
-      return
+    if (workspace === undefined) return false
+    setFoldersBusy(true)
+    try {
+      if (foldersRemoteBase === null) throw new Error(t('folder.notReady'))
+      const pending = createdFolderPendingSave.current
+      const created = pending?.workspaceId === workspaceId && pending.name === name
+        ? pending
+        : await createWorkspaceDirectory(workspace.path, name, foldersRemoteBase, createDirectory)
+      createdFolderPendingSave.current = { workspaceId, name, path: created.path }
+      const entry = addFolder(entryFor(foldersDoc, workspaceId as string), created.path)
+      const next: FoldersDocument = { version: 1, workspaces: { ...foldersDoc.workspaces, [workspaceId]: entry } }
+      // Do not report success or clear the input until both operations succeed.
+      // A failed overlay save does NOT delete the newly created user directory.
+      await saveFolders(next)
+      setFoldersDoc(next)
+      createdFolderPendingSave.current = null
+      return true
+    } catch (reason) {
+      notifyFolder(`${t('folder.addError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      return false
+    } finally {
+      setFoldersBusy(false)
     }
-    const entry = entryFor(foldersDoc, workspaceId as string)
-    if (effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))) {
-      notifyFolder(t('folder.duplicate'))
-      return
-    }
-    writeFolderEntry(workspaceId, addFolder(entry, path))
-    // Mirror subdirectory: also stamp the remote-ssh record, otherwise the new
-    // folder's sessions would lose the remote terminal (remote-ssh reads the
-    // record at the cwd only). Fire and forget — the folder row already works.
-    void ensureRemoteFolderMarker(workspace.path, path)
   }
 
   const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {
@@ -695,7 +758,15 @@ export function GroupsBrowser({
     }
     if (creatingSessionIn !== null) return
     setCreatingSessionIn(folderKey(workspaceId, path))
-    createSessionIn(workspaceId, path).catch((reason: unknown) => {
+    void (async () => {
+      const workspace = workspaces.find(w => w.workspaceId === workspaceId)
+      if (!workspace) throw new Error('Workspace not found')
+      if (foldersRemoteBase === null) throw new Error(t('folder.notReady'))
+      const remote = await remoteFolderWorkspace(workspace.path, foldersRemoteBase)
+      const targetRemote = await remoteFolderWorkspace(path, foldersRemoteBase)
+      if (remote || targetRemote) throw new Error(t('folder.remoteSessionUnsupported'))
+      await createSessionIn(workspaceId, path)
+    })().catch((reason: unknown) => {
       const detail = reason instanceof Error ? reason.message : String(reason)
       notifyFolder(`${t('folder.sessionError')}: ${detail}`)
     }).finally(() => {
@@ -1245,7 +1316,7 @@ export function GroupsBrowser({
             className="wgIconButton"
             aria-label={t('workspace.add')}
             disabled={adding}
-            onClick={addWorkspace}
+            onClick={() => { void addWorkspace() }}
           >
             <IconProjectAddOutlineRegular size={wide ? 16 : 18} />
           </button>
@@ -1338,6 +1409,8 @@ export function GroupsBrowser({
                 onSessionRename={onSessionRename}
                 onSessionArchive={onSessionArchive}
                 onFork={forkSession}
+                onAddWorkspace={() => { void addWorkspace(category.key) }}
+                addingWorkspace={adding || manualSaving}
                 onGroupRename={() => {
                   setGroupDraft(category.key)
                   setGroupError(null)
@@ -1578,7 +1651,7 @@ export function GroupsBrowser({
             remote={isRemoteWorkspace(workspace)}
             onClose={() => { setFoldersTarget(null) }}
             onAdd={() => { void addFolderTo(foldersTarget) }}
-            onAddSubpath={(relative) => { addSubpathTo(foldersTarget, relative) }}
+            onAddSubpath={(relative) => addSubpathTo(foldersTarget, relative)}
             onSetRoot={(path) => { setFolderRoot(foldersTarget, path) }}
             onRemove={(path) => { removeFolderFrom(foldersTarget, path) }}
             onOpenFolder={(path) => { openFolderPath?.(path) }}
@@ -1652,6 +1725,17 @@ export function GroupsBrowser({
       </Modal>
 
       {/* Add workspace error dialog */}
+      {directoryFlowOpen && DirectoryFlow && (
+        <DirectoryFlow
+          {...directoryFlow?.injected}
+          open
+          busy={false}
+          onPicked={path => { finishDirectoryFlow(path) }}
+          onCancel={() => { finishDirectoryFlow(null) }}
+          onError={message => { finishDirectoryFlow(null, message) }}
+        />
+      )}
+
       <Modal
         open={addErrorOpen}
         onClose={() => { setAddErrorOpen(false) }}
@@ -1660,7 +1744,7 @@ export function GroupsBrowser({
         footer={(
           <>
             <Button variant="outline" onClick={() => { setAddErrorOpen(false) }}>{t('close')}</Button>
-            <Button variant="primary" onClick={addWorkspace}>{t('retry')}</Button>
+            <Button variant="primary" onClick={() => { void addWorkspace(addCategoryRef.current) }}>{t('retry')}</Button>
           </>
         )}
       >
@@ -1806,7 +1890,7 @@ function WorkspaceSubtree({ workspace, current, now, t, animate, onOpen, onSessi
 }
 
 /** One category section: header row + expanded workspace folders. */
-function CategorySection({ category, current, now, t, dragIndicator, onDragOverRow, onDragLeaveRow, onDropRow, onDragStartCategory, onDragStartWorkspace, onToggleCategory, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onGroupRename, onGroupDelete, onGroupTogglePin, onGroupAppearance, animate, onMoveOut, canMoveOut, onOpenInFolder, onToggleFolder, onFolderNewSession, onFolderSetRoot, onFolderRemove, onOpenFolderPath, onManageFolders, creatingFolderKey }: {
+function CategorySection({ category, current, now, t, dragIndicator, onDragOverRow, onDragLeaveRow, onDropRow, onDragStartCategory, onDragStartWorkspace, onToggleCategory, onToggleWorkspace, onNewSession, onOpen, onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive, onFork, onAddWorkspace, addingWorkspace, onGroupRename, onGroupDelete, onGroupTogglePin, onGroupAppearance, animate, onMoveOut, canMoveOut, onOpenInFolder, onToggleFolder, onFolderNewSession, onFolderSetRoot, onFolderRemove, onOpenFolderPath, onManageFolders, creatingFolderKey }: {
   category: CategoryNode
   current: SessionId | undefined
   now: number
@@ -1829,6 +1913,8 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
   onSessionRename: (sessionId: SessionId, currentTitle: string) => void
   onSessionArchive: (sessionId: SessionId) => void
   onFork: (sessionId: SessionId) => void
+  onAddWorkspace: () => void
+  addingWorkspace: boolean
   onGroupRename: () => void
   onGroupDelete: () => void
   /** Pin/unpin this group from its row menu. */
@@ -1859,6 +1945,8 @@ function CategorySection({ category, current, now, t, dragIndicator, onDragOverR
         node={category}
         t={t}
         onToggle={onToggleCategory}
+        onAddWorkspace={onAddWorkspace}
+        addingWorkspace={addingWorkspace}
         onRename={onGroupRename}
         onDelete={onGroupDelete}
         onTogglePin={onGroupTogglePin}
@@ -2195,7 +2283,7 @@ function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, onClose, on
   remote: boolean
   onClose: () => void
   onAdd: () => void
-  onAddSubpath: (relative: string) => void
+  onAddSubpath: (relative: string) => Promise<boolean>
   onSetRoot: (path: string) => void
   onRemove: (path: string) => void
   onOpenFolder: (path: string) => void
@@ -2205,8 +2293,8 @@ function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, onClose, on
   const [subpath, setSubpath] = useState('')
   const submitSubpath = (): void => {
     if (subpath.trim() === '') return
-    onAddSubpath(subpath)
-    setSubpath('')
+    if (busy) return
+    void onAddSubpath(subpath).then(success => { if (success) setSubpath('') })
   }
   return (
     <Modal
@@ -2263,9 +2351,7 @@ function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, onClose, on
         })}
       </div>
       <div className="wgFolderListFooter">
-        {remote
-          ? (
-            <>
+        <>
               <p className="wgFolderHint">{t('folder.remoteHint')}</p>
               <div className="wgFolderSubpath">
                 <input
@@ -2286,9 +2372,8 @@ function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, onClose, on
                   {t('folder.addSubpath')}
                 </Button>
               </div>
-            </>
-          )
-          : <Button variant="outline" disabled={busy} onClick={onAdd}>{t('folder.add')}</Button>}
+        </>
+        {!remote && <Button variant="outline" disabled={busy} onClick={onAdd}>{t('folder.add')}</Button>}
       </div>
     </Modal>
   )

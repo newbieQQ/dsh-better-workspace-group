@@ -30,4 +30,4 @@ export type DragIndicator = {
  * @param props - composed slot props (shell owner share + store + injected actions).
  * @returns the region element tree.
  */
-export declare function GroupsBrowser({ wide, expandSidebar, useSessions, useWorkspaces, useSessionStatus, useStore, actions, startSession, createSessionIn, open, renameSession, forkSession, renameWorkspace, deleteWorkspace, insertWorkspaceBefore, archiveSession, insertSessionBefore, createWorkspace, pickDirectory, searchSessions, searchResultLimit, openTab, useTabs, tabActions, t, }: GroupsBrowserProps): import("react").JSX.Element;
+export declare function GroupsBrowser({ wide, expandSidebar, useSessions, useWorkspaces, useSessionStatus, useStore, actions, startSession, createSessionIn, open, renameSession, forkSession, renameWorkspace, deleteWorkspace, insertWorkspaceBefore, archiveSession, insertSessionBefore, createWorkspace, pickDirectory, getDirectoryFlow, createDirectory, searchSessions, searchResultLimit, openTab, useTabs, tabActions, t, }: GroupsBrowserProps): import("react").JSX.Element;

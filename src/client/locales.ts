@@ -47,6 +47,8 @@ export type WorkspaceGroupsKey =
   | 'folder.addError'
   | 'folder.sessionError'
   | 'folder.saveError'
+  | 'folder.notReady'
+  | 'folder.remoteSessionUnsupported'
   | 'folder.remoteHint'
   | 'folder.remoteNeedsSubpath'
   | 'folder.subpathLabel'
@@ -181,11 +183,13 @@ export const zh: WorkspaceGroupsDict = {
   'folder.addError': '添加文件夹失败',
   'folder.sessionError': '新建会话失败',
   'folder.saveError': '文件夹保存失败',
-  'folder.remoteHint': '远程（SSH）工作区：本地目录是服务器根目录的镜像，所以这里只能添加镜像内的子目录，填相对路径即可（也会同步到服务器同名目录）',
+  'folder.notReady': '目录安全信息尚未加载，请重启 DSH 并刷新页面后重试',
+  'folder.remoteSessionUnsupported': '当前 SSH 插件不完整支持子目录会话，请从远程工作区根目录打开会话。不会退回本地终端。',
+  'folder.remoteHint': '输入一个文件夹名：本地使用 DSH 目录接口；远程使用 SSH 创建目录接口（远端同名目录已存在时复用）。SSH 不可用时不会在镜像里创建本地目录。',
   'folder.remoteNeedsSubpath': '远程工作区请用子目录方式添加文件夹',
-  'folder.subpathLabel': '相对路径',
-  'folder.subpathPlaceholder': '例如 data 或 src/generated',
-  'folder.addSubpath': '添加子目录',
+  'folder.subpathLabel': '文件夹名称',
+  'folder.subpathPlaceholder': '例如 data',
+  'folder.addSubpath': '创建文件夹',
   'folder.subpathInvalid': '路径无效：请填工作区内的相对路径，不能用绝对路径或 ..',
   'group.create': '新建分组',
   'group.createTitle': '新建分组',
@@ -314,11 +318,13 @@ export const en: WorkspaceGroupsDict = {
   'folder.addError': 'Could not add the folder',
   'folder.sessionError': 'Could not start a session',
   'folder.saveError': 'Could not save folders',
-  'folder.remoteHint': 'Remote (SSH) workspace: the local directory mirrors the server root, so only subdirectories of that mirror can be added here — type a path relative to the workspace root',
+  'folder.notReady': 'Directory safety information is not loaded. Restart DSH and refresh the page before retrying.',
+  'folder.remoteSessionUnsupported': 'This SSH plugin does not fully support subdirectory sessions. Start from the remote workspace root instead; no local terminal fallback is allowed.',
+  'folder.remoteHint': 'Enter one folder name. Local workspaces use DSH; remote workspaces use SSH mkdir (existing remote directories are reused). Missing SSH never falls back to a local mirror write.',
   'folder.remoteNeedsSubpath': 'Remote workspaces take a subdirectory, not a picked folder',
-  'folder.subpathLabel': 'Relative path',
-  'folder.subpathPlaceholder': 'e.g. data or src/generated',
-  'folder.addSubpath': 'Add subdirectory',
+  'folder.subpathLabel': 'Folder name',
+  'folder.subpathPlaceholder': 'e.g. data',
+  'folder.addSubpath': 'Create folder',
   'folder.subpathInvalid': 'Invalid path: use a relative path inside the workspace (no absolute paths, no ..)',
   'group.create': 'New group',
   'group.createTitle': 'New group',

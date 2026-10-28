@@ -2,15 +2,19 @@
  * Standalone verifier for the per-workspace folder layer.
  *
  * vitest cannot spawn in this sandbox (EPERM), so this script runs the same
- * critical assertions under plain Node 24 type-stripping:
- *   node tools/verify-folders.mjs
+ * critical assertions under Node 24 with TypeScript transformation:
+ *   node --experimental-transform-types tools/verify-folders.mjs
  *
- * It imports the pure module (`src/core/folders.ts`) and the host overlay
- * (`src/host-folders.ts`, Node built-ins only), exercises the root/cwd rules and
- * the strict-write / tolerant-read boundary, then prints exactly one line.
+ * It exercises the pure root/cwd rules, the host overlay's strict-write /
+ * tolerant-read boundary, and the registered folder route in a fake context.
+ * All filesystem fixtures use temporary directories, never real profiles.
  */
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import fsPromises from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
+import { Readable } from 'node:stream'
+import { apply } from '../src/index.ts'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -29,15 +33,15 @@ const {
   samePath,
   setRoot,
 } = await import(coreUrl.href)
+const host = await import(hostUrl.href)
 const {
-  ensureRemoteMarker,
+  defaultRemoteMirrorBase,
   parseFoldersDocument,
   readFoldersDocument,
-  readRemoteMarker,
   remoteSubpath,
   validateFoldersDocument,
   writeFoldersDocument,
-} = await import(hostUrl.href)
+} = host
 
 const BASE = 'C:\\work\\project'
 const EXTRA = 'C:\\work\\extra'
@@ -175,10 +179,7 @@ equal(joinSubpath(MIRROR_WS, './ok'), `${MIRROR_WS}\\ok`, 'a leading dot segment
   equal(folderOfCwd(`${MIRROR_WS}\\data\\file`, MIRROR_WS, entry), `${MIRROR_WS}\\data`, 'sessions under the mirror subpath belong to it')
 }
 
-// --- remote-ssh markers ------------------------------------------------------
-// remote-ssh reads `.remote-ssh.json` at the session cwd only (never walking
-// up), so an extra folder inside a mirror needs its own record or its sessions
-// silently lose the remote terminal.
+// --- pure remote path logic (no marker I/O) ----------------------------------
 equal(remoteSubpath('~/projects/cloud-memory', 'data'), '~/projects/cloud-memory/data', 'a ~ root joins with a slash')
 equal(remoteSubpath('~', 'data'), '~/data', 'a bare ~ keeps its home meaning')
 equal(remoteSubpath('/srv/proj/', 'a/b'), '/srv/proj/a/b', 'an absolute remote root joins with a POSIX slash')
@@ -187,45 +188,100 @@ equal(remoteSubpath('/srv/proj', '..'), null, 'a parent traversal never reaches 
 equal(remoteSubpath('/srv/proj', 'a/../b'), null, 'an embedded traversal never reaches the remote shell')
 equal(remoteSubpath('/srv/proj', '  '), null, 'a blank subpath is refused')
 
+// --- deprecated route: isolated fake context, no server or real profile -------
+check(!('ensureRemoteMarker' in host), 'no exported marker writer remains')
+check(!('readRemoteMarker' in host), 'no remote connection record reader remains')
 {
-  const mirror = await mkdtemp(join(tmpdir(), 'wg-mirror-verify-'))
+  const home = await mkdtemp(join(tmpdir(), 'wg-deprecated-marker-'))
+  const previousHome = process.env.DSH_HOME
+  process.env.DSH_HOME = home
   try {
-    equal(await readRemoteMarker(mirror), null, 'a directory without a record is not remote-backed')
-    const local = await mkdtemp(join(tmpdir(), 'wg-local-verify-'))
-    try {
-      equal(
-        await ensureRemoteMarker(local, join(local, 'sub')),
-        { marked: false },
-        'a local workspace is left untouched',
-      )
-      const marker = {
-        profileId: 'p-1', host: 'qyhhh.top', port: 22, user: 'ubuntu',
-        keyPath: 'C:\\Users\\me\\.ssh\\id_ed25519', remotePath: '~/projects/cloud-memory',
-      }
-      await writeFile(join(mirror, '.remote-ssh.json'), JSON.stringify(marker, null, 2), 'utf8')
-      equal(await readRemoteMarker(mirror), marker, 'the record round-trips')
+    const routes = []
+    apply({
+      effect: callback => callback(),
+      webServer: { register: route => { routes.push(route); return () => {} } },
+    })
+    const route = routes.find(item => item.path === '/workspace-groups/folders')
+    check(route !== undefined, 'folders route remains registered')
+    const request = async (method, body) => {
+      const req = Readable.from(body === undefined ? [] : [body])
+      req.method = method
+      let status
+      let text
+      await route.handler(req, {
+        writeHead: code => { status = code },
+        end: value => { text = value },
+      })
+      return { status, text }
+    }
+    const mirror = join(home, 'mirror')
+    const existing = join(mirror, 'existing')
+    await mkdir(existing, { recursive: true })
+    const rootMarker = '{"host":"example.invalid","user":"test","port":22,"remotePath":"/srv/test","writeBack":false}'
+    const childMarker = '{"keep":"existing user marker"}\n'
+    await writeFile(join(mirror, '.remote-ssh.json'), rootMarker, 'utf8')
+    await writeFile(join(existing, '.remote-ssh.json'), childMarker, 'utf8')
+    for (const body of [
+      JSON.stringify({ workspacePath: mirror, folderPath: join(mirror, 'new', 'nested') }),
+      JSON.stringify({ workspacePath: mirror, folderPath: existing }),
+      '{invalid json',
+      undefined,
+    ]) {
+      const response = await request('POST', body)
+      equal(response.status, 410, 'legacy POST is unconditionally gone')
+      check(response.text.includes('deprecated'), 'legacy POST explains deprecation')
+    }
+    equal(await readdir(mirror), ['.remote-ssh.json', 'existing'], 'POST creates no child directories or markers')
+    equal(await readFile(join(mirror, '.remote-ssh.json'), 'utf8'), rootMarker, 'root marker and writeBack guard stay unchanged')
+    equal(await readFile(join(existing, '.remote-ssh.json'), 'utf8'), childMarker, 'existing child marker is neither overwritten nor deleted')
+    equal(await readdir(home), ['mirror'], 'POST writes no overlay either')
+    const document = { version: 1, workspaces: { test: { folders: [existing] } } }
+    equal((await request('PUT', JSON.stringify(document))).status, 200, 'normal folder PUT remains available')
+    const response = await request('GET')
+    equal(response.status, 200, 'normal folder GET remains available')
+    equal(JSON.parse(response.text), { ...document, remoteBase: defaultRemoteMirrorBase() }, 'GET preserves saved folders and remote mirror base')
 
-      const sub = join(mirror, 'data', 'raw')
-      equal(
-        await ensureRemoteMarker(mirror, sub),
-        { marked: true, remotePath: '~/projects/cloud-memory/data/raw' },
-        'a nested extra folder gets the remote counterpart of its own path',
-      )
-      equal(
-        await readRemoteMarker(sub),
-        { ...marker, remotePath: '~/projects/cloud-memory/data/raw' },
-        'the stamped record keeps the connection and only rewrites remotePath',
-      )
-      await assert.rejects(
-        () => ensureRemoteMarker(mirror, join(mirror, '..', 'outside')),
-        /folder is not inside the workspace directory/u,
-        'a folder outside the mirror is refused, never stamped',
-      )
+    const hintRoute = routes.find(item => item.path === '/workspace-groups/remote-hint')
+    check(hintRoute !== undefined, 'remote hint route is registered')
+    const hintRequest = async (method, path) => {
+      let status
+      let text
+      await hintRoute.handler({
+        method,
+        url: '/workspace-groups/remote-hint' + (path === undefined ? '' : '?path=' + encodeURIComponent(path)),
+      }, {
+        writeHead: code => { status = code },
+        end: value => { text = value },
+      })
+      return { status, text }
+    }
+    equal(await hintRequest('GET', join(mirror, 'not-created', 'nested')), { status: 200, text: '{"remoteHint":true}' }, 'ancestor marker detects a non-default mirror even for missing descendants')
+    equal(await hintRequest('GET', existing), { status: 200, text: '{"remoteHint":true}' }, 'marker content need not parse as connection data')
+    equal(await hintRequest('GET', home), { status: 200, text: '{"remoteHint":false}' }, 'no marker reports false')
+    equal(await hintRequest('HEAD', existing), { status: 200, text: undefined }, 'HEAD has no response body')
+    equal((await hintRequest('POST', existing)).status, 405, 'hint endpoint is read-only')
+    for (const path of [undefined, '', 'relative', home + '\u0000', home + 'x'.repeat(1025)]) {
+      equal((await hintRequest('GET', path)).status, 400, 'invalid hint paths are rejected')
+    }
+    equal(await readFile(join(mirror, '.remote-ssh.json'), 'utf8'), rootMarker, 'hint leaves root marker unchanged')
+    equal(await readFile(join(existing, '.remote-ssh.json'), 'utf8'), childMarker, 'hint never rewrites malformed marker content')
+    const originalLstat = fsPromises.lstat
+    try {
+      for (const code of ['EACCES', 'EIO', 'ENOTDIR']) {
+        fsPromises.lstat = async () => { throw Object.assign(new Error('private path must not leak'), { code }) }
+        syncBuiltinESMExports()
+        const failed = await hintRequest('GET', existing)
+        equal(failed.status, 500, 'inspection errors fail closed, never return false')
+        check(!failed.text.includes('private path'), 'inspection errors do not expose marker details')
+      }
     } finally {
-      await rm(local, { recursive: true, force: true })
+      fsPromises.lstat = originalLstat
+      syncBuiltinESMExports()
     }
   } finally {
-    await rm(mirror, { recursive: true, force: true })
+    if (previousHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previousHome
+    await rm(home, { recursive: true, force: true })
   }
 }
 

@@ -4,7 +4,12 @@
  * write validation and tolerant read, including the atomic file round-trip.
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Readable } from 'node:stream'
+import { apply } from '../src/index.ts'
+import type { GroupsContext, GroupsWebRoute } from '../src/context-types.ts'
+import * as hostFolders from '../src/host-folders.ts'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -28,6 +33,104 @@ import {
 
 const BASE = 'C:\\work\\project'
 const EXTRA = 'C:\\work\\extra'
+
+describe('deprecated remote marker route', () => {
+  it('exports no marker writer or connection record reader', () => {
+    expect(hostFolders).not.toHaveProperty('ensureRemoteMarker')
+    expect(hostFolders).not.toHaveProperty('readRemoteMarker')
+  })
+
+  it('returns 410 without creating or changing markers, while GET/PUT still work', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'wg-deprecated-marker-'))
+    const previousHome = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      const routes: GroupsWebRoute[] = []
+      apply({
+        effect: (callback: () => unknown) => callback(),
+        webServer: { register: (route: GroupsWebRoute) => { routes.push(route); return () => {} } },
+      } as unknown as GroupsContext)
+      const route = routes.find(item => item.path === '/workspace-groups/folders')!
+      expect(route).toBeDefined()
+      const request = async (method: string, body?: string) => {
+        const req = Readable.from(body === undefined ? [] : [body]) as IncomingMessage
+        req.method = method
+        let status = 0
+        let text: string | undefined
+        await route.handler(req, {
+          writeHead: (code: number) => { status = code },
+          end: (value?: string) => { text = value },
+        } as unknown as ServerResponse)
+        return { status, text }
+      }
+      const mirror = join(home, 'mirror')
+      const existing = join(mirror, 'existing')
+      await mkdir(existing, { recursive: true })
+      const rootMarker = '{"host":"example.invalid","user":"test","port":22,"remotePath":"/srv/test","writeBack":false}'
+      const childMarker = '{"keep":"existing user marker"}\n'
+      await writeFile(join(mirror, '.remote-ssh.json'), rootMarker, 'utf8')
+      await writeFile(join(existing, '.remote-ssh.json'), childMarker, 'utf8')
+      for (const body of [
+        JSON.stringify({ workspacePath: mirror, folderPath: join(mirror, 'new', 'nested') }),
+        JSON.stringify({ workspacePath: mirror, folderPath: existing }),
+        '{invalid json',
+        undefined,
+      ]) {
+        const response = await request('POST', body)
+        expect(response.status).toBe(410)
+        expect(response.text).toContain('deprecated')
+      }
+      expect(await readdir(mirror)).toEqual(['.remote-ssh.json', 'existing'])
+      expect(await readFile(join(mirror, '.remote-ssh.json'), 'utf8')).toBe(rootMarker)
+      expect(await readFile(join(existing, '.remote-ssh.json'), 'utf8')).toBe(childMarker)
+      expect(await readdir(home)).toEqual(['mirror'])
+      const document = { version: 1, workspaces: { test: { folders: [existing] } } }
+      expect((await request('PUT', JSON.stringify(document))).status).toBe(200)
+      const response = await request('GET')
+      expect(response.status).toBe(200)
+      expect(JSON.parse(response.text!)).toEqual({ ...document, remoteBase: hostFolders.defaultRemoteMirrorBase() })
+
+      const hintRoute = routes.find(item => item.path === '/workspace-groups/remote-hint')!
+      expect(hintRoute).toBeDefined()
+      const hintRequest = async (method: string, path?: string) => {
+        let status = 0
+        let text: string | undefined
+        await hintRoute.handler({
+          method,
+          url: '/workspace-groups/remote-hint' + (path === undefined ? '' : '?path=' + encodeURIComponent(path)),
+        } as IncomingMessage, {
+          writeHead: (code: number) => { status = code },
+          end: (value?: string) => { text = value },
+        } as unknown as ServerResponse)
+        return { status, text }
+      }
+      expect(await hintRequest('GET', join(mirror, 'not-created', 'nested'))).toEqual({ status: 200, text: '{"remoteHint":true}' })
+      expect(await hintRequest('GET', existing)).toEqual({ status: 200, text: '{"remoteHint":true}' })
+      expect(await hintRequest('GET', home)).toEqual({ status: 200, text: '{"remoteHint":false}' })
+      expect(await hintRequest('HEAD', existing)).toEqual({ status: 200, text: undefined })
+      expect((await hintRequest('POST', existing)).status).toBe(405)
+      for (const path of [undefined, '', 'relative', home + '\u0000', home + 'x'.repeat(1025)]) {
+        expect((await hintRequest('GET', path)).status).toBe(400)
+      }
+      expect(await readFile(join(mirror, '.remote-ssh.json'), 'utf8')).toBe(rootMarker)
+      expect(await readFile(join(existing, '.remote-ssh.json'), 'utf8')).toBe(childMarker)
+    } finally {
+      if (previousHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousHome
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('remoteSubpath (pure path logic)', () => {
+  it('joins remote roots with POSIX separators and rejects traversal', () => {
+    expect(hostFolders.remoteSubpath('~', 'data')).toBe('~/data')
+    expect(hostFolders.remoteSubpath('/srv/project/', 'a\\b')).toBe('/srv/project/a/b')
+    expect(hostFolders.remoteSubpath('/srv/project', '../escape')).toBeNull()
+    expect(hostFolders.remoteSubpath('/srv/project', 'a/../b')).toBeNull()
+    expect(hostFolders.remoteSubpath('/srv/project', '  ')).toBeNull()
+  })
+})
 
 describe('samePath', () => {
   it('is case-insensitive for Windows-style paths', () => {

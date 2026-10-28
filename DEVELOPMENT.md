@@ -179,7 +179,11 @@ $installed = "C:\Users\qyh15\.dsh\profiles\desktop\node_modules\@dsh-xhl\workspa
   额外文件夹只能是镜像内子目录（用 `joinSubpath` 拼、`isUnderBase` 判定，**绝不要让
   用户用原生选择器挑任意本地目录**）；`cwd` 分区逻辑照常可用，因为会话本身也在本地跑。
   真正"服务器上另一个根目录"应当由 SSH 插件单独建成工作区，再用分组归到一起。
-  另外 `POST /workspace-groups/folders` 会在**镜像内新增的子目录**里补一份
-  `.remote-ssh.json`（`remotePath` 拼到对应远端子目录）：SSH 插件的 shell wrapper 与
-  部分 fs 桥只在**会话 cwd 本身**找这个标记、不向上遍历，缺了它子目录会话会退化成
-  本地终端。该文件被同步流程永久排除，不会落到服务器。
+  `POST /workspace-groups/folders` 已停用（410）：禁止复制子 marker，避免绕过父写回规则。
+  统一创建入口在 `src/client/folder-directory.ts`：listWorkspaces 判归属，本地使用 DSH
+  createDirectory，远端用专属 mkdir API（递归幂等），不走可能降级本地的 sidebar fs.mkdir。
+  缺 SSH 的已知镜像、网络/鉴权失败、坏目录清单和重叠根一律报错。远程子目录会话暂阻断，
+  因 remote-ssh 2.4.40 模型工具仍只匹配注册根 cwd。历史 marker 不自动清理。
+  验证：`node tools/verify-folder-directory.mjs`（模拟 API）和
+  `node --experimental-transform-types tools/verify-folders.mjs`（含 marker POST 拒绝回归）。
+  不要把静态检查/模拟通过当成实机 SSH 联调通过。
