@@ -111,3 +111,38 @@ export async function saveFolders(
   })
   if (!response.ok) throw new Error(`PUT ${FOLDERS_ROUTE}: ${response.status}`)
 }
+
+/**
+ * Ask the host to stamp the remote-ssh connection record into an extra folder of
+ * a MIRROR workspace.
+ *
+ * remote-ssh decides "remote backed" by reading `.remote-ssh.json` at the
+ * session cwd and never walks up, so a folder below the mirror root would
+ * otherwise get a local terminal. Best-effort: the folder itself is already
+ * persisted by the time this runs, and a local workspace answers `marked:false`
+ * (nothing to stamp) rather than failing.
+ * @param workspacePath - the workspace's canonical directory (mirror root).
+ * @param folderPath - the extra folder just added.
+ * @param fetchImpl - fetch implementation (injectable for tests).
+ * @returns true when a record was written.
+ */
+export async function ensureRemoteFolderMarker(
+  workspacePath: string,
+  folderPath: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    const response = await fetchImpl(FOLDERS_ROUTE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspacePath, folderPath }),
+      cache: 'no-store',
+    })
+    if (!response.ok) return false
+    const body: unknown = await response.json()
+    if (typeof body !== 'object' || body === null) return false
+    return (body as { marked?: unknown }).marked === true
+  } catch {
+    return false
+  }
+}

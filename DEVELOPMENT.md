@@ -34,7 +34,7 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/index.ts` | 插件入口。`inject = ['webServer']`，注册 4 组路由：`GET /workspace-groups/config`、`GET|PUT /workspace-groups/tabs`、`PUT /workspace-groups/manual`、`GET|PUT /workspace-groups/folders` |
+| `src/index.ts` | 插件入口。`inject = ['webServer']`，注册 4 组路由：`GET /workspace-groups/config`、`GET|PUT /workspace-groups/tabs`、`PUT /workspace-groups/manual`、`GET|PUT|POST /workspace-groups/folders` |
 | `src/host-config.ts` | 读用户 YAML 分类规则（默认 `~/.dsh/workspace-groups.yaml`），校验后以 JSON 下发 |
 | `src/host-manual.ts` | 运行期分组覆盖（手动分组 + 单工作区归类覆盖），落 `$DSH_HOME/workspace-groups.manual.json` |
 | `src/host-folders.ts` | 每个工作区的额外文件夹 + 根目录，落 `$DSH_HOME/workspace-groups.folders.json`（写时严格、读时宽容）。另提供 `defaultRemoteMirrorBase()`：`~/.dsh/remote-workspaces`，即 `@zhangfengshun/dsh-remote-ssh` 的本地镜像根，GET 时随文档下发 |
@@ -179,3 +179,7 @@ $installed = "C:\Users\qyh15\.dsh\profiles\desktop\node_modules\@dsh-xhl\workspa
   额外文件夹只能是镜像内子目录（用 `joinSubpath` 拼、`isUnderBase` 判定，**绝不要让
   用户用原生选择器挑任意本地目录**）；`cwd` 分区逻辑照常可用，因为会话本身也在本地跑。
   真正"服务器上另一个根目录"应当由 SSH 插件单独建成工作区，再用分组归到一起。
+  另外 `POST /workspace-groups/folders` 会在**镜像内新增的子目录**里补一份
+  `.remote-ssh.json`（`remotePath` 拼到对应远端子目录）：SSH 插件的 shell wrapper 与
+  部分 fs 桥只在**会话 cwd 本身**找这个标记、不向上遍历，缺了它子目录会话会退化成
+  本地终端。该文件被同步流程永久排除，不会落到服务器。

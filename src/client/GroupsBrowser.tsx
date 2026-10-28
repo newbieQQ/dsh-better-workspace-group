@@ -56,7 +56,7 @@ import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, 
 import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
 import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, isUnderBase, joinSubpath, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
-import { loadFolders, saveFolders } from './folders-persist.ts'
+import { ensureRemoteFolderMarker, loadFolders, saveFolders } from './folders-persist.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
@@ -667,6 +667,10 @@ export function GroupsBrowser({
       return
     }
     writeFolderEntry(workspaceId, addFolder(entry, path))
+    // Mirror subdirectory: also stamp the remote-ssh record, otherwise the new
+    // folder's sessions would lose the remote terminal (remote-ssh reads the
+    // record at the cwd only). Fire and forget — the folder row already works.
+    void ensureRemoteFolderMarker(workspace.path, path)
   }
 
   const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {

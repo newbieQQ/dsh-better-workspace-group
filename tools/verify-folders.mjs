@@ -30,8 +30,11 @@ const {
   setRoot,
 } = await import(coreUrl.href)
 const {
+  ensureRemoteMarker,
   parseFoldersDocument,
   readFoldersDocument,
+  readRemoteMarker,
+  remoteSubpath,
   validateFoldersDocument,
   writeFoldersDocument,
 } = await import(hostUrl.href)
@@ -170,6 +173,60 @@ equal(joinSubpath(MIRROR_WS, './ok'), `${MIRROR_WS}\\ok`, 'a leading dot segment
   const entry = addFolder(undefined, joinSubpath(MIRROR_WS, 'data'))
   equal(effectiveFolders(MIRROR_WS, entry), [MIRROR_WS, `${MIRROR_WS}\\data`], 'a typed mirror subpath becomes an extra folder')
   equal(folderOfCwd(`${MIRROR_WS}\\data\\file`, MIRROR_WS, entry), `${MIRROR_WS}\\data`, 'sessions under the mirror subpath belong to it')
+}
+
+// --- remote-ssh markers ------------------------------------------------------
+// remote-ssh reads `.remote-ssh.json` at the session cwd only (never walking
+// up), so an extra folder inside a mirror needs its own record or its sessions
+// silently lose the remote terminal.
+equal(remoteSubpath('~/projects/cloud-memory', 'data'), '~/projects/cloud-memory/data', 'a ~ root joins with a slash')
+equal(remoteSubpath('~', 'data'), '~/data', 'a bare ~ keeps its home meaning')
+equal(remoteSubpath('/srv/proj/', 'a/b'), '/srv/proj/a/b', 'an absolute remote root joins with a POSIX slash')
+equal(remoteSubpath('/srv/proj', 'a\\b'), '/srv/proj/a/b', 'a Windows-styled subpath still joins POSIX')
+equal(remoteSubpath('/srv/proj', '..'), null, 'a parent traversal never reaches the remote shell')
+equal(remoteSubpath('/srv/proj', 'a/../b'), null, 'an embedded traversal never reaches the remote shell')
+equal(remoteSubpath('/srv/proj', '  '), null, 'a blank subpath is refused')
+
+{
+  const mirror = await mkdtemp(join(tmpdir(), 'wg-mirror-verify-'))
+  try {
+    equal(await readRemoteMarker(mirror), null, 'a directory without a record is not remote-backed')
+    const local = await mkdtemp(join(tmpdir(), 'wg-local-verify-'))
+    try {
+      equal(
+        await ensureRemoteMarker(local, join(local, 'sub')),
+        { marked: false },
+        'a local workspace is left untouched',
+      )
+      const marker = {
+        profileId: 'p-1', host: 'qyhhh.top', port: 22, user: 'ubuntu',
+        keyPath: 'C:\\Users\\me\\.ssh\\id_ed25519', remotePath: '~/projects/cloud-memory',
+      }
+      await writeFile(join(mirror, '.remote-ssh.json'), JSON.stringify(marker, null, 2), 'utf8')
+      equal(await readRemoteMarker(mirror), marker, 'the record round-trips')
+
+      const sub = join(mirror, 'data', 'raw')
+      equal(
+        await ensureRemoteMarker(mirror, sub),
+        { marked: true, remotePath: '~/projects/cloud-memory/data/raw' },
+        'a nested extra folder gets the remote counterpart of its own path',
+      )
+      equal(
+        await readRemoteMarker(sub),
+        { ...marker, remotePath: '~/projects/cloud-memory/data/raw' },
+        'the stamped record keeps the connection and only rewrites remotePath',
+      )
+      await assert.rejects(
+        () => ensureRemoteMarker(mirror, join(mirror, '..', 'outside')),
+        /folder is not inside the workspace directory/u,
+        'a folder outside the mirror is refused, never stamped',
+      )
+    } finally {
+      await rm(local, { recursive: true, force: true })
+    }
+  } finally {
+    await rm(mirror, { recursive: true, force: true })
+  }
 }
 
 // Success is a single machine-checkable line: the harness pastes this output.

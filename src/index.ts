@@ -17,6 +17,9 @@
  * - `PUT /workspace-groups/folders` — replace the folder overlay whole.
  *   Strictly validated (absolute paths, no duplicates, root membership) and
  *   written atomically; the saved document is echoed back.
+ * - `POST /workspace-groups/folders` — stamp the remote-ssh connection record
+ *   into an extra folder of a mirror workspace, so sessions started there keep
+ *   a remote terminal (see the mirror block comment in host-folders.ts).
  *
  * Core workspace.json / session storage is never touched.
  */
@@ -42,6 +45,7 @@ import {
 import {
   defaultFoldersPath,
   defaultRemoteMirrorBase,
+  ensureRemoteMarker,
   readFoldersDocument,
   validateFoldersDocument,
   writeFoldersDocument,
@@ -261,6 +265,43 @@ export function apply(ctx: GroupsContext): void {
           'Content-Length': Buffer.byteLength(body),
         })
         res.end(req.method === 'HEAD' ? undefined : body)
+        return
+      }
+      if (req.method === 'POST') {
+        // `{ workspacePath, folderPath }` → stamp the remote-ssh connection
+        // record into an extra folder of a MIRROR workspace. The client sends
+        // this right after adding such a folder: remote-ssh reads the record at
+        // the session cwd (it never walks up), so without it a session started
+        // in `<mirror>/sub` would silently get a local terminal.
+        let raw: unknown
+        try {
+          raw = JSON.parse(await readBody(req, MAX_MANUAL_BODY_BYTES))
+        } catch (error) {
+          const status = error instanceof HttpError ? error.status : 400
+          writeError(res, status, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const payload = typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : {}
+        const workspacePath = typeof payload.workspacePath === 'string' ? payload.workspacePath.trim() : ''
+        const folderPath = typeof payload.folderPath === 'string' ? payload.folderPath.trim() : ''
+        if (workspacePath === '' || folderPath === '') {
+          writeError(res, 400, 'workspace-groups: workspacePath and folderPath are required')
+          return
+        }
+        let result: { marked: boolean; remotePath?: string }
+        try {
+          result = await ensureRemoteMarker(workspacePath, folderPath)
+        } catch (error) {
+          writeError(res, 400, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const marked = JSON.stringify(result)
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Length': Buffer.byteLength(marked),
+        })
+        res.end(marked)
         return
       }
       if (req.method !== 'PUT') {

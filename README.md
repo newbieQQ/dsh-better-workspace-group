@@ -101,6 +101,10 @@
   subdirectory of that mirror — i.e. a directory that also exists on the server. Picking an
   unrelated local directory is refused, because a session there would never sync: a separate
   remote root should be its own workspace (add it with the SSH plugin), grouped next to this one
+- Such an extra folder gets a **`.remote-ssh.json` stamped into it** (same connection record,
+  `remotePath` pointing at the matching remote subdirectory). The SSH plugin reads that record at
+  the session cwd only, never walking up, so without it a session in the subdirectory would fall
+  back to a LOCAL terminal. The file is always excluded from sync, so it never reaches the server
 
 ### Search & operations
 - **Tree-shaped search**: results keep the three-level structure (category → project → matched

@@ -58,3 +58,46 @@ export declare function readFoldersDocument(path: string): Promise<FoldersDocume
  * @param document - validated document to persist.
  */
 export declare function writeFoldersDocument(path: string, document: FoldersDocument): Promise<void>;
+/** Connection record of the remote-ssh plugin at a mirror root. */
+export declare const REMOTE_MARKER_FILE_NAME = ".remote-ssh.json";
+/** The subset of that record this plugin needs to reproduce it. */
+export interface RemoteMarker {
+    readonly profileId?: string;
+    readonly host: string;
+    readonly port: number;
+    readonly user: string;
+    readonly keyPath?: string;
+    readonly proxyJump?: string;
+    readonly remotePath: string;
+}
+/**
+ * Read the remote-ssh connection record of a directory.
+ * @param dir - directory that may hold the record (a mirror root, usually).
+ * @returns the record, or null when the directory is not remote-backed.
+ */
+export declare function readRemoteMarker(dir: string): Promise<RemoteMarker | null>;
+/**
+ * Join a remote path with a mirror-relative subpath.
+ *
+ * The remote path is POSIX (the server's), so this never uses `node:path`:
+ * a Windows host would otherwise hand `/home/me/proj\data` to the remote shell.
+ * @param remotePath - the workspace's remote root (`~`, `~/proj`, `/srv/proj`).
+ * @param relativePath - subpath inside the mirror, either separator style.
+ * @returns the remote counterpart, or null for an empty or escaping subpath.
+ */
+export declare function remoteSubpath(remotePath: string, relativePath: string): string | null;
+/**
+ * Stamp the remote-ssh connection record into a subdirectory of a mirror, so
+ * that sessions started there keep a remote terminal (see the block comment).
+ *
+ * A workspace that is not remote-backed is left untouched: no record at the
+ * workspace root means the plugin has nothing to reproduce.
+ * @param workspacePath - the workspace's canonical directory (the mirror root).
+ * @param folderPath - subdirectory added as an extra folder.
+ * @returns `{ marked: false }` for a local workspace, otherwise the remote path
+ * written into the subdirectory record.
+ */
+export declare function ensureRemoteMarker(workspacePath: string, folderPath: string): Promise<{
+    marked: boolean;
+    remotePath?: string;
+}>;

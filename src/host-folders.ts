@@ -12,8 +12,8 @@
  * same reason the manual overlay does: a stale or malformed sidecar must never
  * freeze the tree.
  */
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { mkdir, open, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { dirname, relative, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import {
   EMPTY_FOLDERS_DOCUMENT,
@@ -254,4 +254,126 @@ export async function writeFoldersDocument(path: string, document: FoldersDocume
     await unlink(tmp).catch(() => {})
     throw error
   }
+}
+
+// ---------------------------------------------------------------------------
+// remote-ssh markers
+//
+// `@zhangfengshun/dsh-remote-ssh` decides "this directory belongs to a remote
+// workspace" by looking for a `.remote-ssh.json` connection record at the
+// directory itself (the shell wrapper and several fs bridges read exactly one
+// path, they do NOT walk up). Its mirror root carries one; a plain subdirectory
+// of the mirror does not, so a session whose cwd is such a subdirectory falls
+// back to a LOCAL terminal even though every file under it is remote-backed.
+//
+// Stamping the record into the subdirectory fixes that: the record holds the
+// same connection with `remotePath` adjusted to the matching remote folder, and
+// remote-ssh always excludes `.remote-ssh.json` from sync, so it never travels
+// to the server.
+// ---------------------------------------------------------------------------
+
+/** Connection record of the remote-ssh plugin at a mirror root. */
+export const REMOTE_MARKER_FILE_NAME = '.remote-ssh.json'
+
+/** The subset of that record this plugin needs to reproduce it. */
+export interface RemoteMarker {
+  readonly profileId?: string
+  readonly host: string
+  readonly port: number
+  readonly user: string
+  readonly keyPath?: string
+  readonly proxyJump?: string
+  readonly remotePath: string
+}
+
+/**
+ * Read the remote-ssh connection record of a directory.
+ * @param dir - directory that may hold the record (a mirror root, usually).
+ * @returns the record, or null when the directory is not remote-backed.
+ */
+export async function readRemoteMarker(dir: string): Promise<RemoteMarker | null> {
+  let text: string
+  try {
+    text = await readFile(resolve(dir, REMOTE_MARKER_FILE_NAME), 'utf8')
+  } catch {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const row = parsed as Record<string, unknown>
+  if (typeof row.host !== 'string' || row.host === '') return null
+  if (typeof row.user !== 'string' || row.user === '') return null
+  const port = typeof row.port === 'number' && Number.isInteger(row.port) && row.port > 0 ? row.port : 22
+  const remotePath = typeof row.remotePath === 'string' ? row.remotePath.trim() : ''
+  if (remotePath === '') return null
+  return {
+    ...(typeof row.profileId === 'string' && row.profileId !== '' ? { profileId: row.profileId } : {}),
+    host: row.host,
+    port,
+    user: row.user,
+    ...(typeof row.keyPath === 'string' ? { keyPath: row.keyPath } : {}),
+    ...(typeof row.proxyJump === 'string' && row.proxyJump !== '' ? { proxyJump: row.proxyJump } : {}),
+    remotePath,
+  }
+}
+
+/**
+ * Join a remote path with a mirror-relative subpath.
+ *
+ * The remote path is POSIX (the server's), so this never uses `node:path`:
+ * a Windows host would otherwise hand `/home/me/proj\data` to the remote shell.
+ * @param remotePath - the workspace's remote root (`~`, `~/proj`, `/srv/proj`).
+ * @param relativePath - subpath inside the mirror, either separator style.
+ * @returns the remote counterpart, or null for an empty or escaping subpath.
+ */
+export function remoteSubpath(remotePath: string, relativePath: string): string | null {
+  const rel = relativePath.trim().replace(/\\/gu, '/').replace(/^\/+|\/+$/gu, '')
+  if (rel === '') return null
+  if (rel.split('/').some(segment => segment === '..' || segment === '.')) return null
+  const base = remotePath === '~' ? '~' : remotePath.replace(/\/+$/u, '')
+  return base === '' ? rel : `${base}/${rel}`
+}
+
+/**
+ * Stamp the remote-ssh connection record into a subdirectory of a mirror, so
+ * that sessions started there keep a remote terminal (see the block comment).
+ *
+ * A workspace that is not remote-backed is left untouched: no record at the
+ * workspace root means the plugin has nothing to reproduce.
+ * @param workspacePath - the workspace's canonical directory (the mirror root).
+ * @param folderPath - subdirectory added as an extra folder.
+ * @returns `{ marked: false }` for a local workspace, otherwise the remote path
+ * written into the subdirectory record.
+ */
+export async function ensureRemoteMarker(
+  workspacePath: string,
+  folderPath: string,
+): Promise<{ marked: boolean; remotePath?: string }> {
+  const base = resolve(workspacePath)
+  const folder = resolve(folderPath)
+  const rel = relative(base, folder)
+  if (rel === '' || rel.startsWith('..')) {
+    throw invalid('folder is not inside the workspace directory')
+  }
+  const marker = await readRemoteMarker(base)
+  if (marker === null) return { marked: false }
+  const remotePath = remoteSubpath(marker.remotePath, rel.split(sep).join('/'))
+  if (remotePath === null) throw invalid('remote subpath is unusable')
+  const record: RemoteMarker = {
+    ...(marker.profileId === undefined ? {} : { profileId: marker.profileId }),
+    host: marker.host,
+    port: marker.port,
+    user: marker.user,
+    ...(marker.keyPath === undefined ? {} : { keyPath: marker.keyPath }),
+    ...(marker.proxyJump === undefined ? {} : { proxyJump: marker.proxyJump }),
+    remotePath,
+  }
+  await mkdir(folder, { recursive: true })
+  await writeFile(resolve(folder, REMOTE_MARKER_FILE_NAME), JSON.stringify(record, null, 2), 'utf8')
+  return { marked: true, remotePath }
 }
