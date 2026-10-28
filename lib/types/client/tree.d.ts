@@ -107,6 +107,8 @@ export interface GroupsTreeView {
 }
 /** Key of the uncategorized bucket (matches the config fallback label). */
 export declare const UNCATEGORIZED_KEY = "\u672A\u5206\u7C7B";
+/** Whether this category key names the "not yet classified" bucket. */
+export declare function isDockedCategoryKey(key: string): boolean;
 /** Directory display label: basename of the path (both separators accepted). */
 export declare function workspaceLabel(cwd: string | undefined): string;
 /**

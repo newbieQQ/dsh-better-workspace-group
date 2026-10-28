@@ -52,7 +52,7 @@ import {
   type ManualGroups,
 } from '../core/types.ts'
 import type { GroupsBrowserProps } from './contract.ts'
-import { deriveDefaultWorkspace, deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, UNCATEGORIZED_KEY, type CategoryNode, type SearchMatchSet, type SearchTree, type WorkspaceGroupNode } from './tree.ts'
+import { deriveDefaultWorkspace, deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, isDockedCategoryKey, UNCATEGORIZED_KEY, type CategoryNode, type SearchMatchSet, type SearchTree, type WorkspaceGroupNode } from './tree.ts'
 import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
 import { GROUP_EMOJI_ICONS, GROUP_ICON_LABELS } from './group-icon-labels.ts'
@@ -150,6 +150,28 @@ function withoutSessions(node: WorkspaceGroupNode): WorkspaceGroupNode {
     containsCurrent: node.containsCurrent,
     sessions: [],
   }
+}
+
+/**
+ * Split the derived categories into the tree and the docked "not classified
+ * yet" bucket (see isDockedCategoryKey). The bucket keeps its own row and
+ * children, only its position moves to the bottom dock.
+ */
+function splitDockedCategory(categories: readonly CategoryNode[]): {
+  treeGroups: readonly CategoryNode[]
+  dockedCategory: CategoryNode | undefined
+} {
+  const docked = categories.find(category => isDockedCategoryKey(category.key))
+  return {
+    treeGroups: docked === undefined ? categories : categories.filter(category => category !== docked),
+    dockedCategory: docked,
+  }
+}
+
+/** Whether a workspace node (or one of its folder rows) holds a matched session. */
+function workspaceHasMatchedSession(workspace: WorkspaceGroupNode, matched: ReadonlySet<SessionId>): boolean {
+  if (workspace.sessions.some(session => matched.has(session.id))) return true
+  return workspace.folders?.some(folder => folder.sessions.some(session => matched.has(session.id))) ?? false
 }
 
 function sanitizeSearchQuery(value: string): string {
@@ -492,6 +514,26 @@ export function GroupsBrowser({
       ? undefined
       : deriveSearchGroups(list, workspaces, config, searchMatches.matchedIds, archivedSessionIds, manual, searchMatches.snippetsBySession, statuses, foldersDoc)),
     [list, workspaces, config, searchMatches, archivedSessionIds, manual, statuses, foldersDoc],
+  )
+  // The "not classified yet" bucket leaves the tree and docks above the
+  // default-workspace bar, so unsorted projects never take a tree slot.
+  const { treeGroups, dockedCategory } = useMemo(() => splitDockedCategory(groups), [groups])
+  // Search keeps the dock too, but pruned to the matching rows: a bucket with no
+  // match is content, not a permanent anchor, so it simply does not show.
+  const searchDockCategory = useMemo<CategoryNode | undefined>(() => {
+    if (searchTree === undefined || searchMatches === undefined) return undefined
+    const docked = searchTree.categories.find(category => isDockedCategoryKey(category.key))
+    if (docked === undefined) return undefined
+    const workspaces = docked.workspaces.filter(workspace => workspaceHasMatchedSession(workspace, searchMatches.matchedIds))
+    return workspaces.length === 0 ? undefined : { ...docked, workspaces }
+  }, [searchTree, searchMatches])
+  // The results area must never repeat the docked bucket: drop it from the tree
+  // handed to SearchBody (the dock renders it instead).
+  const searchTreeForBody = useMemo<SearchTree | undefined>(
+    () => (searchTree === undefined
+      ? undefined
+      : { ...searchTree, categories: searchTree.categories.filter(category => !isDockedCategoryKey(category.key)) }),
+    [searchTree],
   )
   // Quick panel (Ctrl+R): category label per grouped workspace id (the tree
   // derivation already resolved grouping; top-level workspaces stay absent).
@@ -1314,6 +1356,83 @@ export function GroupsBrowser({
       ? defaultWorkspace
       : (searchTree?.defaultWorkspace ?? withoutSessions(defaultWorkspace))
 
+  // Idle: the bucketed category as the tree derived it. Searching: the pruned
+  // bucket (matched rows only), absent when nothing matched.
+  const dockCategory = normalizedQuery === '' ? dockedCategory : searchDockCategory
+
+  /**
+   * One category section with every tree callback bound. Extracted so the docked
+   * bucket is literally the same row/children component as a tree category —
+   * drag, menu, rename, appearance, folder management all behave identically.
+   */
+  const categorySectionNode = (category: CategoryNode): JSX.Element => (
+    <CategorySection
+      key={category.key}
+      category={category}
+      current={current}
+      now={now}
+      t={t}
+      dragIndicator={dragIndicator}
+      onDragOverRow={onDragOverRow}
+      onDragLeaveRow={onDragLeaveRow}
+      onDropRow={onDropRow}
+      onDragStartCategory={onDragStartCategory(category.key)}
+      onDragStartWorkspace={onDragStartWorkspace}
+      onToggleCategory={() => { actions.setCategoryExpanded(category.key, !category.expanded) }}
+      onToggleWorkspace={(key) => { actions.setWorkspaceExpanded(key, !workspaceExpansion[key]) }}
+      onNewSession={startSessionAtRoot}
+      onOpen={open}
+      onToggleFolder={toggleFolder}
+      onFolderNewSession={startSessionInFolder}
+      onFolderSetRoot={setFolderRoot}
+      onFolderRemove={removeFolderFrom}
+      onOpenFolderPath={openFolderPath}
+      onManageFolders={(workspaceId) => { setFoldersTarget(workspaceId) }}
+      creatingFolderKey={creatingSessionIn}
+      onRenameRequest={(workspaceId, title) => {
+        setRenameTarget({ workspaceId, currentTitle: title })
+        setRenameDraft(title)
+        setRenameError(null)
+      }}
+      onDeleteRequest={(workspaceId, title) => {
+        setDeleteTarget({ workspaceId, title })
+        setDeleteError(null)
+      }}
+      onSessionRename={onSessionRename}
+      onSessionArchive={onSessionArchive}
+      onFork={forkSession}
+      onAddWorkspace={() => { void addWorkspace(category.key) }}
+      addingWorkspace={adding || manualSaving}
+      onGroupRename={() => {
+        setGroupDraft(category.key)
+        setGroupError(null)
+        setGroupDialog({ mode: 'rename', from: category.key })
+      }}
+      onGroupDelete={() => {
+        setGroupDeleteTarget(category.key)
+        setGroupDeleteError(null)
+      }}
+      onGroupTogglePin={() => { void toggleCategoryPinned(category.key) }}
+      onGroupAppearance={() => {
+        setAppearanceDraft(manual.appearance[category.key] ?? {})
+        setAppearanceError(null)
+        setAppearanceTarget(category.key)
+      }}
+      animate={dragging === null}
+      onMoveOut={(workspaceId) => { void moveWorkspaceTo(workspaceId, UNCATEGORIZED_KEY) }}
+      onOpenInFolder={openInFolder}
+      canMoveOut={(workspaceId) => {
+        // The menu "Move out of group" is offered for any project that
+        // currently sits inside a group (rule-classified or manual) —
+        // not just overridden ones. Top-level projects
+        // (resolveCategory === undefined) don't need it.
+        const workspace = workspaces.find(w => w.workspaceId === workspaceId)
+        return workspace !== undefined
+          && resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title) !== undefined
+      }}
+    />
+  )
+
   return (
     <div className={`wgRoot${wide ? '' : ' wgRail'}`}>
       {/* The tab strip portals itself into the conversation column's head seat,
@@ -1424,9 +1543,9 @@ export function GroupsBrowser({
         {manualError !== null && (
           <div className="wgSearchStatus wgManualError" role="alert">{t('manual.saveError')}: {manualError}</div>
         )}
-        {wide && normalizedQuery !== '' && searchTree !== undefined && searchMatches !== undefined ? (
+        {wide && normalizedQuery !== '' && searchTreeForBody !== undefined && searchMatches !== undefined ? (
           <SearchBody
-            tree={searchTree}
+            tree={searchTreeForBody}
             matches={searchMatches}
             status={activeRemoteSearch.status}
             current={current}
@@ -1441,78 +1560,12 @@ export function GroupsBrowser({
              the index-based measurement). */
           <div className="wgTreeWrap">
             <div className="wgList" role="tree" aria-label={t('section.workspaces')}>
-            {/* The pinned default workspace sits in its own bottom bar, so a tree
-                holding nothing but that workspace is not "empty". */}
-            {groups.length === 0 && topLevel.length === 0 && !topLevelDropActive && defaultBarNode === undefined && (
+            {/* The docked bucket and the pinned default workspace sit outside the
+                tree's scroll area, so a tree holding nothing but them is not "empty". */}
+            {treeGroups.length === 0 && topLevel.length === 0 && !topLevelDropActive && defaultBarNode === undefined && dockCategory === undefined && (
               <div className="wgEmpty">{workspacePhase === 'ready' ? t('empty.noWorkspaces') : t('empty.none')}</div>
             )}
-            {groups.map((category) => (
-              <CategorySection
-                key={category.key}
-                category={category}
-                current={current}
-                now={now}
-                t={t}
-                dragIndicator={dragIndicator}
-                onDragOverRow={onDragOverRow}
-                onDragLeaveRow={onDragLeaveRow}
-                onDropRow={onDropRow}
-                onDragStartCategory={onDragStartCategory(category.key)}
-                onDragStartWorkspace={onDragStartWorkspace}
-                onToggleCategory={() => { actions.setCategoryExpanded(category.key, !category.expanded) }}
-                onToggleWorkspace={(key) => { actions.setWorkspaceExpanded(key, !workspaceExpansion[key]) }}
-                onNewSession={startSessionAtRoot}
-                onOpen={open}
-                onToggleFolder={toggleFolder}
-                onFolderNewSession={startSessionInFolder}
-                onFolderSetRoot={setFolderRoot}
-                onFolderRemove={removeFolderFrom}
-                onOpenFolderPath={openFolderPath}
-                onManageFolders={(workspaceId) => { setFoldersTarget(workspaceId) }}
-                creatingFolderKey={creatingSessionIn}
-                onRenameRequest={(workspaceId, title) => {
-                  setRenameTarget({ workspaceId, currentTitle: title })
-                  setRenameDraft(title)
-                  setRenameError(null)
-                }}
-                onDeleteRequest={(workspaceId, title) => {
-                  setDeleteTarget({ workspaceId, title })
-                  setDeleteError(null)
-                }}
-                onSessionRename={onSessionRename}
-                onSessionArchive={onSessionArchive}
-                onFork={forkSession}
-                onAddWorkspace={() => { void addWorkspace(category.key) }}
-                addingWorkspace={adding || manualSaving}
-                onGroupRename={() => {
-                  setGroupDraft(category.key)
-                  setGroupError(null)
-                  setGroupDialog({ mode: 'rename', from: category.key })
-                }}
-                onGroupDelete={() => {
-                  setGroupDeleteTarget(category.key)
-                  setGroupDeleteError(null)
-                }}
-                onGroupTogglePin={() => { void toggleCategoryPinned(category.key) }}
-                onGroupAppearance={() => {
-                  setAppearanceDraft(manual.appearance[category.key] ?? {})
-                  setAppearanceError(null)
-                  setAppearanceTarget(category.key)
-                }}
-                animate={dragging === null}
-                onMoveOut={(workspaceId) => { void moveWorkspaceTo(workspaceId, UNCATEGORIZED_KEY) }}
-                onOpenInFolder={openInFolder}
-                canMoveOut={(workspaceId) => {
-                  // The menu "Move out of group" is offered for any project that
-                  // currently sits inside a group (rule-classified or manual) —
-                  // not just overridden ones. Top-level projects
-                  // (resolveCategory === undefined) don't need it.
-                  const workspace = workspaces.find(w => w.workspaceId === workspaceId)
-                  return workspace !== undefined
-                    && resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title) !== undefined
-                }}
-              />
-            ))}
+            {treeGroups.map(categorySectionNode)}
             {/* Top-level (ungrouped) workspaces, rendered after the group
                 folders. While dragging a project the whole area is the
                 move-out landing spot (a line shows the insert position;
@@ -1561,50 +1614,62 @@ export function GroupsBrowser({
         )}
       </div>
 
-      {/* Pinned default workspace: a sibling of the tree's scroll area (not a
-          row inside it), above a divider, so a long session list can never
-          push it away or scroll it out. It keeps the whole workspace-row
-          behaviour — toggle, new session, rename, delete, ⋯ menu, folder
-          management — and its sessions still highlight as usual. */}
-      {wide && defaultBarNode !== undefined && (
-        <div className="wgDefaultWorkspaceBar" role="group" aria-label={t('section.defaultWorkspace')}>
-          <WorkspaceRow
-            node={defaultBarNode}
-            t={t}
-            flat
-            onToggle={() => { actions.setWorkspaceExpanded(defaultBarNode.workspaceId as string, !workspaceExpansion[defaultBarNode.workspaceId]) }}
-            onNewSession={() => { startSessionAtRoot(defaultBarNode.workspaceId) }}
-            onRename={() => {
-              setRenameTarget({ workspaceId: defaultBarNode.workspaceId, currentTitle: defaultBarNode.label })
-              setRenameDraft(defaultBarNode.label)
-              setRenameError(null)
-            }}
-            onDelete={() => {
-              setDeleteTarget({ workspaceId: defaultBarNode.workspaceId, title: defaultBarNode.label })
-              setDeleteError(null)
-            }}
-            {...(openInFolder !== undefined
-              ? { onOpenInFolder: () => { openInFolder(defaultBarNode.workspaceId) } }
-              : {})}
-            onManageFolders={() => { setFoldersTarget(defaultBarNode.workspaceId) }}
-          />
-          <WorkspaceSubtree
-            workspace={defaultBarNode}
-            current={current}
-            now={now}
-            t={t}
-            animate={dragging === null}
-            onOpen={open}
-            onSessionRename={onSessionRename}
-            onSessionArchive={onSessionArchive}
-            onFork={forkSession}
-            onToggleFolder={toggleFolder}
-            onFolderNewSession={startSessionInFolder}
-            onFolderSetRoot={setFolderRoot}
-            onFolderRemove={removeFolderFrom}
-            onOpenFolderPath={openFolderPath}
-            creatingFolderKey={creatingSessionIn}
-          />
+      {/* Bottom dock: siblings of the tree's scroll area (not rows inside it), so
+          a long session list can never push them away or scroll them out.
+          - the "not classified yet" bucket keeps its own category row and
+            children (same component, same drag/menu behaviour), capped in height
+            with its own scroll so a big bucket cannot swallow the tree;
+          - the Host default workspace keeps the whole workspace-row behaviour
+            (toggle, new session, rename, delete, ⋯ menu, folder management) and
+            its sessions still highlight as usual. */}
+      {wide && (dockCategory !== undefined || defaultBarNode !== undefined) && (
+        <div className="wgDock">
+          {dockCategory !== undefined && (
+            <div className="wgDockBucket" role="group" aria-label={dockCategory.label}>
+              {categorySectionNode(dockCategory)}
+            </div>
+          )}
+          {defaultBarNode !== undefined && (
+            <div className="wgDefaultWorkspaceBar" role="group" aria-label={t('section.defaultWorkspace')}>
+              <WorkspaceRow
+                node={defaultBarNode}
+                t={t}
+                flat
+                onToggle={() => { actions.setWorkspaceExpanded(defaultBarNode.workspaceId as string, !workspaceExpansion[defaultBarNode.workspaceId]) }}
+                onNewSession={() => { startSessionAtRoot(defaultBarNode.workspaceId) }}
+                onRename={() => {
+                  setRenameTarget({ workspaceId: defaultBarNode.workspaceId, currentTitle: defaultBarNode.label })
+                  setRenameDraft(defaultBarNode.label)
+                  setRenameError(null)
+                }}
+                onDelete={() => {
+                  setDeleteTarget({ workspaceId: defaultBarNode.workspaceId, title: defaultBarNode.label })
+                  setDeleteError(null)
+                }}
+                {...(openInFolder !== undefined
+                  ? { onOpenInFolder: () => { openInFolder(defaultBarNode.workspaceId) } }
+                  : {})}
+                onManageFolders={() => { setFoldersTarget(defaultBarNode.workspaceId) }}
+              />
+              <WorkspaceSubtree
+                workspace={defaultBarNode}
+                current={current}
+                now={now}
+                t={t}
+                animate={dragging === null}
+                onOpen={open}
+                onSessionRename={onSessionRename}
+                onSessionArchive={onSessionArchive}
+                onFork={forkSession}
+                onToggleFolder={toggleFolder}
+                onFolderNewSession={startSessionInFolder}
+                onFolderSetRoot={setFolderRoot}
+                onFolderRemove={removeFolderFrom}
+                onOpenFolderPath={openFolderPath}
+                creatingFolderKey={creatingSessionIn}
+              />
+            </div>
+          )}
         </div>
       )}
 

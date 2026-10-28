@@ -156,6 +156,19 @@ export interface GroupsTreeView {
 /** Key of the uncategorized bucket (matches the config fallback label). */
 export const UNCATEGORIZED_KEY = UNCATEGORIZED_LABEL
 
+/**
+ * Names the "not sorted yet" bucket commonly gets. A group whose key matches one
+ * of these is docked to the bottom of the sidebar (above the default-workspace
+ * row) instead of taking a slot in the tree, so the workspaces a user has not
+ * classified yet never push the classified tree around.
+ */
+const DOCKED_CATEGORY_PATTERN = /^(?:未归类|未分类|未分组|未排序|待归类|ungrouped|uncategorized|unsorted)$/iu
+
+/** Whether this category key names the "not yet classified" bucket. */
+export function isDockedCategoryKey(key: string): boolean {
+  return DOCKED_CATEGORY_PATTERN.test(key.trim())
+}
+
 /** Directory display label: basename of the path (both separators accepted). */
 export function workspaceLabel(cwd: string | undefined): string {
   if (cwd === undefined || cwd === '') return UNCATEGORIZED_LABEL

@@ -9,7 +9,9 @@ const source = readFileSync(new URL('../src/client/styles.css', import.meta.url)
 transform({ filename: 'styles.css', code: Buffer.from(source) })
 const rule = selector => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const result = source.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))
+  // Anchor at a line start so a selector that also appears inside a compound
+  // rule (".wgDockBucket + .wgDefaultWorkspaceBar") never shadows its own block.
+  const result = source.match(new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`, 'm'))
   assert.ok(result, `missing rule: ${selector}`)
   return result[1].replace(/\s/g, '')
 }
@@ -57,11 +59,15 @@ const sections = rule('.wgIconSections')
 assert.ok(sections.includes('max-height:') && sections.includes('overflow-y:auto;'), 'icon picker is bounded, footer stays visible')
 assert.ok(!rule('.wgIconGrid').includes('max-height:'), 'the scroll box moved from the grid to the section list')
 
-// D. The pinned default workspace is a sibling of the scrolling tree, so a long
-// session list can never scroll it away.
-const bar = rule('.wgDefaultWorkspaceBar')
-assert.ok(bar.includes('border-top:'), 'the bar is separated from the tree')
-assert.ok(bar.includes('flex:none;'), 'the bar must not be squeezed by the tree')
+// D. The bottom dock (not-classified bucket + pinned default workspace) is a
+// sibling of the scrolling tree, so a long session list can never scroll it
+// away. The dock owns the divider; the bucket scrolls inside a capped box.
+const dock = rule('.wgDock')
+assert.ok(dock.includes('border-top:'), 'the dock is separated from the tree')
+assert.ok(dock.includes('flex:none;'), 'the dock must not be squeezed by the tree')
+const bucket = rule('.wgDockBucket')
+assert.ok(bucket.includes('overflow-y:auto;') && bucket.includes('max-height:'), 'a long bucket scrolls on its own')
+assert.ok(rule('.wgDefaultWorkspaceBar').includes('flex:none;'), 'the default-workspace row must not be squeezed by the tree')
 
 // E. The markup backs the CSS: every row hands its rest-state label (member
 // count or session time) AND its buttons to the one trailing slot, so both right
