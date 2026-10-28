@@ -3,6 +3,7 @@
   flex-direction:column;
   flex:1;
   width:100%;
+  min-width:0;
   min-height:0;
   display:flex;
   overflow:hidden;
@@ -80,9 +81,46 @@
 
 .wgTreeBody {
   flex:1;
+  min-width:0;
   min-height:0;
   padding:0 8px 8px;
+  overflow-x:hidden;
   overflow-y:auto;
+}
+
+/* Pinned default workspace: a sibling of the tree's scroll area, never inside
+   it — a long session list scrolls above this bar and can neither push it away
+   nor scroll it out. The divider separates the two zones. */
+.wgDefaultWorkspaceBar {
+  flex:none;
+  min-width:0;
+  padding:6px 8px 8px;
+  border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f47);
+}
+
+.wgDefaultWorkspaceBar .wgProjectRow {
+  margin-bottom:2px;
+}
+
+/* Every nesting container must be allowed to shrink below its min-content
+   width. Otherwise a long title expands the grid track and pushes the action
+   column beyond the visible scrollport, even though the title has ellipsis. */
+.wgTreeWrap,.wgList,.wgRows,.wgRowsInner,.wgTreeChildren {
+  min-width:0;
+  max-width:100%;
+}
+
+.wgCategoryRow,.wgProjectRow,.wgFolderRow,.wgSessionRow {
+  box-sizing:border-box;
+  width:100%;
+  min-width:0;
+  max-width:100%;
+}
+
+/* Indentation belongs only on the left; all trailing action buttons share
+   the same right inset, independent of title length and nesting depth. */
+.wgRowActions:last-child {
+  margin-left:auto;
 }
 
 .wgList {
@@ -203,7 +241,8 @@
   overflow:hidden;
 }
 
-.wgCategoryCount {
+.wgCategoryCount,
+.wgProjectCount {
   color:var(--dsw-fg-3,#7f7f7fcc);
   flex:none;
   font-size:11px;
@@ -295,6 +334,22 @@
   display:inline-flex;
 }
 
+/* One trailing slot per row: the member count and the hover buttons are stacked
+   in the same grid cell, pinned to the row's right edge. The count therefore
+   sits exactly where the buttons appear (both right-aligned), the cell is always
+   as wide as the widest of the two, and the swap cannot move either box. */
+.wgRowTrail {
+  display:grid;
+  flex:none;
+  margin-left:auto;
+  align-items:center;
+  justify-items:end;
+}
+
+.wgRowTrail > * {
+  grid-area:1 / 1;
+}
+
 .wgProjectRow:hover .wgRowActions,.wgProjectRow:focus-within .wgRowActions {
   opacity:1;
 }
@@ -351,6 +406,29 @@
   color:var(--dsw-fg-3,#7f7f7fcc);
   flex:none;
   font-size:11px;
+}
+
+/* Trailing member count / session time and trailing actions are mutually
+   exclusive: at rest a row states its count (groups, workspaces, folders) or the
+   session's relative time, and as soon as it is hovered or reached by keyboard
+   focus the "+" / "⋯" buttons take that trailing slot. Both live in the same
+   .wgRowTrail cell and keep their boxes (opacity + visibility), so the count and
+   the time are right-aligned on the row's right edge exactly where the buttons
+   appear, and the swap never changes the row height nor reflows the label. */
+.wgCategoryCount,.wgFolderCount,.wgProjectCount,.wgSessionTime {
+  transition:opacity .12s ease;
+}
+
+.wgCategoryRow:hover .wgCategoryCount,
+.wgCategoryRow:focus-within .wgCategoryCount,
+.wgFolderRow:hover .wgFolderCount,
+.wgFolderRow:focus-within .wgFolderCount,
+.wgProjectRow:hover .wgProjectCount,
+.wgProjectRow:focus-within .wgProjectCount,
+.wgSessionRow:hover .wgSessionTime,
+.wgSessionRow:focus-within .wgSessionTime {
+  opacity:0;
+  visibility:hidden;
 }
 
 /* Sessions hanging off a folder row: one indent step deeper than a plain
@@ -410,6 +488,7 @@
    hover halos and focus rings are never cut off. */
 .wgRows {
   display:grid;
+  grid-template-columns:minmax(0,1fr);
   grid-template-rows:1fr;
 }
 
@@ -678,7 +757,35 @@
   border-color:var(--dsw-alias-label-primary,currentColor);
 }
 
-/* Appearance dialog: colour swatches, icon picker grid, pin toggle. */
+/* Appearance dialog: colour swatches, categorised icon picker, pin toggle. */
+.wgAppearanceBody {
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+
+/* Cap against the modal's padded viewport box (the host Modal documents
+   `max-height:100%` for consumers) and scroll the card body instead of letting
+   the card grow: the title row stays pinned while it scrolls, and the footer —
+   the only "done" button — lives outside the scroller, so a taller icon picker
+   can never push it out of the dialog. */
+.wgAppearanceDialog {
+  max-height:100%;
+}
+
+.wgAppearanceContent {
+  overflow-x:hidden;
+  overflow-y:auto;
+  min-height:0;
+}
+
+.wgAppearanceContent > :first-child {
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:var(--dsw-alias-bg-layer-2,transparent);
+}
+
 .wgAppearanceSection {
   display:flex;
   flex-direction:column;
@@ -724,10 +831,60 @@
   background:var(--dsw-bg-hover,#7f7f7f1f);
 }
 
+/* One height-capped scroller for every icon section (common presets, the four
+   research families, emoji), so the picker grows sideways, not downwards. The
+   4px padding keeps edge cells' focus rings inside the clip. */
+.wgIconSections {
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  max-height:216px;
+  overflow-y:auto;
+  padding:4px;
+  scrollbar-gutter:stable;
+}
+
+.wgIconSection {
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+
+.wgIconSectionLabel {
+  color:var(--dsw-fg-3,#7f7f7fcc);
+  font-size:11px;
+  font-weight:600;
+  line-height:14px;
+}
+
 .wgIconGrid {
   gap:4px;
-  grid-template-columns:repeat(10,1fr);
+  grid-template-columns:repeat(auto-fill,minmax(28px,1fr));
+  padding:1px;
   display:grid;
+}
+
+.wgEmojiGrid .wgIconCell {
+  font-size:18px;
+}
+
+/* Restore-default + custom glyph: a row under the picker, kept clear of the
+   picker's scroller (its focus ring never overlaps a cell). */
+.wgIconCustom {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-top:2px;
+}
+
+.wgIconCustom .wgRenameInput {
+  flex:1;
+  min-width:0;
+}
+
+.wgIconCell.wgIconDefault {
+  width:auto;
+  padding:0 8px;
 }
 
 .wgIconCell {
@@ -737,8 +894,8 @@
   border-radius:5px;
   justify-content:center;
   align-items:center;
-  width:24px;
-  height:24px;
+  width:28px;
+  height:28px;
   padding:0;
   display:inline-flex;
   background:transparent;
@@ -750,6 +907,12 @@
 
 .wgIconCell[aria-pressed=true] {
   background:var(--dsw-bg-selected,#4a90d92e);
+  box-shadow:inset 0 0 0 1px var(--dsw-accent,#4a90d9);
+}
+
+.wgIconCell:focus-visible {
+  outline:2px solid var(--dsw-accent,#4a90d9);
+  outline-offset:1px;
 }
 
 .wgIconCell:disabled {

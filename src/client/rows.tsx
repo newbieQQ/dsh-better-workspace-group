@@ -10,6 +10,36 @@
  */
 import { useEffect, useRef, useState, type AnimationEvent, type DragEvent, type ReactNode } from 'react'
 import {
+  IconNewChatOutlineMedium,
+  IconSearchOutlineMedium,
+  IconSettingsOutlineMedium,
+  IconDeliverDocMedium,
+  IconEditOutlineMedium,
+  IconThinkOutlineMedium,
+  IconAgentPresetOutlineMedium,
+  IconBrowseOutlineMedium,
+  IconContextInjectionOutlineMedium,
+  IconLinkOutlineMedium,
+  IconShareOutlineMedium,
+  IconUserOutlineMedium,
+  IconPaperPlaneOutlineMedium,
+  IconPaperclipOutlineMedium,
+  IconDownloadOutlineMedium,
+  IconPlayOutlineMedium,
+  IconPersonalizationOutlineMedium,
+  IconDarkOutlineMedium,
+  IconFollowsystemOutlineMedium,
+  IconGaugeOutlineMedium,
+  IconQueueOutlineMedium,
+  IconListPenOutlineMedium,
+  IconInspectOutlineMedium,
+  IconQuestionOutlineMedium,
+  IconInfoOutlineMedium,
+  IconAlarmClockOutlineMedium,
+  IconCompareSplitOutlineMedium,
+  IconCheckCircleOutlineMedium,
+  IconPinOutlineMedium,
+  IconMicrophoneOutlineMedium,
   IconApiOutlineMedium,
   IconArchiveOutlineRegular,
   IconArchiveOutlineMedium,
@@ -51,6 +81,9 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceGroupsKey } from './locales.ts'
+import { SessionFlower } from './FlowerBranch.tsx'
+import { scienceIconNodes, type ScienceIconId } from './group-icons-science.tsx'
+import type { GroupIconId } from '../core/types.ts'
 import type { CategoryNode, FolderNode, SessionNode, WorkspaceGroupNode } from './tree.ts'
 
 type T = TranslateNS<'workspaceGroups'>
@@ -118,7 +151,7 @@ export interface RowDropProps {
  * folder glyph used by unprefixed groups. Keyed by plain string so an id from
  * a newer host (or a hand-edited JSON file) degrades instead of throwing.
  */
-const CATEGORY_ICONS: Record<string, ReactNode> = {
+const HOST_CATEGORY_ICONS = {
   folder: <IconFolderCloseMedium />,
   workspace: <IconWorkspaceTreeOutlineMedium />,
   code: <IconCodeOutlineMedium />,
@@ -139,6 +172,46 @@ const CATEGORY_ICONS: Record<string, ReactNode> = {
   checklist: <IconChecklistOutlineMedium />,
   sparkle: <IconSparkleMedium />,
   tree: <IconTreeCornerMedium />,
+  chat: <IconNewChatOutlineMedium />,
+  search: <IconSearchOutlineMedium />,
+  settings: <IconSettingsOutlineMedium />,
+  document: <IconDeliverDocMedium />,
+  edit: <IconEditOutlineMedium />,
+  think: <IconThinkOutlineMedium />,
+  agent: <IconAgentPresetOutlineMedium />,
+  browse: <IconBrowseOutlineMedium />,
+  context: <IconContextInjectionOutlineMedium />,
+  link: <IconLinkOutlineMedium />,
+  share: <IconShareOutlineMedium />,
+  user: <IconUserOutlineMedium />,
+  send: <IconPaperPlaneOutlineMedium />,
+  attachment: <IconPaperclipOutlineMedium />,
+  download: <IconDownloadOutlineMedium />,
+  play: <IconPlayOutlineMedium />,
+  design: <IconPersonalizationOutlineMedium />,
+  moon: <IconDarkOutlineMedium />,
+  monitor: <IconFollowsystemOutlineMedium />,
+  gauge: <IconGaugeOutlineMedium />,
+  queue: <IconQueueOutlineMedium />,
+  notes: <IconListPenOutlineMedium />,
+  inspect: <IconInspectOutlineMedium />,
+  help: <IconQuestionOutlineMedium />,
+  info: <IconInfoOutlineMedium />,
+  alarm: <IconAlarmClockOutlineMedium />,
+  compare: <IconCompareSplitOutlineMedium />,
+  done: <IconCheckCircleOutlineMedium />,
+  pin: <IconPinOutlineMedium />,
+  microphone: <IconMicrophoneOutlineMedium />,
+} satisfies Record<Exclude<GroupIconId, ScienceIconId>, ReactNode>
+
+/**
+ * Registered icon id → rendered artwork. The research family is merged in from
+ * its own module: those glyphs are drawn locally (the Host primitive package
+ * ships no lab/material icons) but must render through the very same path.
+ */
+const CATEGORY_ICONS: Record<string, ReactNode> = {
+  ...HOST_CATEGORY_ICONS,
+  ...scienceIconNodes(),
 }
 
 /**
@@ -148,7 +221,7 @@ const CATEGORY_ICONS: Record<string, ReactNode> = {
  */
 function resolveCategoryIcon(icon: string | undefined): ReactNode | null {
   if (icon === undefined || icon === '') return null
-  const preset = CATEGORY_ICONS[icon]
+  const preset = Object.prototype.hasOwnProperty.call(CATEGORY_ICONS, icon) ? CATEGORY_ICONS[icon] : undefined
   if (preset !== undefined) return preset
   return Array.from(icon).length <= 4 ? <span className="wgCategoryGlyph">{icon}</span> : null
 }
@@ -234,51 +307,55 @@ export function CategoryRow({ node, t, onToggle, onAddWorkspace, addingWorkspace
         />
       </span>
       <span className="wgCategoryLabel">{node.label}</span>
-      <span className="wgCategoryCount">{count}</span>
       {pinned && (
         <span className="wgCategoryPin" aria-hidden>
           <IconPinFillMedium />
         </span>
       )}
-      {onAddWorkspace !== undefined && (
+      {/* One trailing slot for both states: the count and the hover buttons are
+          stacked in the same grid cell pinned to the row's right edge, so the
+          count is right-aligned exactly where the buttons appear and the swap
+          never moves a box (see .wgRowTrail in styles.css). */}
+      <span className="wgRowTrail">
+        <span className="wgCategoryCount">{count}</span>
         <span className="wgRowActions">
-          <button type="button" className="wgIconButton" draggable={false}
-            disabled={addingWorkspace}
-            title={t('workspace.add')} aria-label={`${t('workspace.add')} · ${node.label}`}
-            onClick={event => { event.stopPropagation(); onAddWorkspace() }}>
-            <IconPlusOutlineRegular />
-          </button>
+          {onAddWorkspace !== undefined && (
+            <button type="button" className="wgIconButton" draggable={false}
+              disabled={addingWorkspace}
+              title={t('workspace.add')} aria-label={`${t('workspace.add')} · ${node.label}`}
+              onClick={event => { event.stopPropagation(); onAddWorkspace() }}>
+              <IconPlusOutlineRegular />
+            </button>
+          )}
+          {manageable && (
+            <Menu
+              open={menuOpen}
+              onClose={() => { setMenuOpen(false) }}
+              items={menuItems}
+              onSelect={(id) => {
+                setMenuOpen(false)
+                if (id === 'pin') onTogglePin?.()
+                if (id === 'appearance') onEditAppearance?.()
+                if (id === 'rename') onRename()
+                if (id === 'delete') onDelete()
+              }}
+              portal
+              closeOnPointerLeave
+              anchor={(
+                <button
+                  type="button"
+                  className="wgIconButton"
+                  draggable={false}
+                  aria-label={`${t('group.rename')} ${node.label}`}
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+                >
+                  <IconEllipsisOutlineRegular />
+                </button>
+              )}
+            />
+          )}
         </span>
-      )}
-      {manageable && (
-        <span className="wgRowActions">
-          <Menu
-            open={menuOpen}
-            onClose={() => { setMenuOpen(false) }}
-            items={menuItems}
-            onSelect={(id) => {
-              setMenuOpen(false)
-              if (id === 'pin') onTogglePin?.()
-              if (id === 'appearance') onEditAppearance?.()
-              if (id === 'rename') onRename()
-              if (id === 'delete') onDelete()
-            }}
-            portal
-            closeOnPointerLeave
-            anchor={(
-              <button
-                type="button"
-                className="wgIconButton"
-                draggable={false}
-                aria-label={`${t('group.rename')} ${node.label}`}
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
-              >
-                <IconEllipsisOutlineRegular />
-              </button>
-            )}
-          />
-        </span>
-      )}
+      </span>
     </div>
   )
 }
@@ -357,42 +434,50 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
         <IconProjectAddOutlineRegular />
       </span>
       <span className="wgProjectLabel" title={node.path}>{node.label}</span>
-      <span className="wgRowActions">
-        <Menu
-          open={menuOpen}
-          onClose={() => { setMenuOpen(false) }}
-          items={menuItems}
-          onSelect={(id) => {
-            setMenuOpen(false)
-            if (id === 'openInFolder') onOpenInFolder?.()
-            if (id === 'moveOut') onMoveOut?.()
-            if (id === 'folders') onManageFolders?.()
-            if (id === 'rename') onRename()
-            if (id === 'delete') onDelete()
-          }}
-          portal
-          closeOnPointerLeave
-          anchor={(
-            <button
-              type="button"
-              className="wgIconButton"
-              draggable={false}
-              aria-label={`${t('workspace.rename')} ${node.label}`}
-              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
-            >
-              <IconEllipsisOutlineRegular />
-            </button>
-          )}
-        />
-        <button
-          type="button"
-          className="wgIconButton"
-          draggable={false}
-          aria-label={`${t('session.new')} ${node.label}`}
-          onClick={(e) => { e.stopPropagation(); onNewSession() }}
-        >
-          <IconPlusOutlineRegular />
-        </button>
+      {/* Same trailing-slot contract as groups and folders: the count and the
+          hover buttons share one right-aligned grid cell, so the count sits where
+          the buttons appear and the swap never moves either box. */}
+      <span className="wgRowTrail">
+        <span className="wgProjectCount">{node.sessionCount}</span>
+        {/* Action order is uniform across every row kind: new-session ＋ first,
+            menu ⋯ second (see CategoryRow). */}
+        <span className="wgRowActions">
+          <button
+            type="button"
+            className="wgIconButton"
+            draggable={false}
+            aria-label={`${t('session.new')} ${node.label}`}
+            onClick={(e) => { e.stopPropagation(); onNewSession() }}
+          >
+            <IconPlusOutlineRegular />
+          </button>
+          <Menu
+            open={menuOpen}
+            onClose={() => { setMenuOpen(false) }}
+            items={menuItems}
+            onSelect={(id) => {
+              setMenuOpen(false)
+              if (id === 'openInFolder') onOpenInFolder?.()
+              if (id === 'moveOut') onMoveOut?.()
+              if (id === 'folders') onManageFolders?.()
+              if (id === 'rename') onRename()
+              if (id === 'delete') onDelete()
+            }}
+            portal
+            closeOnPointerLeave
+            anchor={(
+              <button
+                type="button"
+                className="wgIconButton"
+                draggable={false}
+                aria-label={`${t('workspace.rename')} ${node.label}`}
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+              >
+                <IconEllipsisOutlineRegular />
+              </button>
+            )}
+          />
+        </span>
       </span>
     </div>
   )
@@ -460,43 +545,49 @@ export function FolderRow({ node, t, onToggle, onNewSession, onSetRoot, onRemove
       {node.isRoot && (
         <span className="wgFolderRoot" title={t('folder.rootBadge')} aria-label={t('folder.rootBadge')}>★</span>
       )}
-      <span className="wgFolderCount">{node.sessions.length}</span>
-      <span className="wgRowActions">
-        <Menu
-          open={menuOpen}
-          onClose={() => { setMenuOpen(false) }}
-          items={menuItems}
-          onSelect={(id) => {
-            setMenuOpen(false)
-            if (id === 'newSession') onNewSession()
-            if (id === 'openInFolder') onOpenInFolder?.()
-            if (id === 'setRoot') onSetRoot()
-            if (id === 'remove') onRemove()
-          }}
-          portal
-          closeOnPointerLeave
-          anchor={(
-            <button
-              type="button"
-              className="wgIconButton"
-              draggable={false}
-              aria-label={`${t('folder.title')} ${node.label}`}
-              onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
-            >
-              <IconEllipsisOutlineRegular />
-            </button>
-          )}
-        />
-        <button
-          type="button"
-          className="wgIconButton"
-          draggable={false}
-          disabled={creating}
-          aria-label={`${t('session.new')} ${node.label}`}
-          onClick={(e) => { e.stopPropagation(); onNewSession() }}
-        >
-          <IconPlusOutlineRegular />
-        </button>
+      {/* Count and hover buttons share the same right-aligned cell (as on every
+          other row): the count is flush with the row's right edge and yields to
+          the buttons without any reflow. */}
+      <span className="wgRowTrail">
+        <span className="wgFolderCount">{node.sessions.length}</span>
+        {/* Same ＋ then ⋯ order as groups and workspaces. */}
+        <span className="wgRowActions">
+          <button
+            type="button"
+            className="wgIconButton"
+            draggable={false}
+            disabled={creating}
+            aria-label={`${t('session.new')} ${node.label}`}
+            onClick={(e) => { e.stopPropagation(); onNewSession() }}
+          >
+            <IconPlusOutlineRegular />
+          </button>
+          <Menu
+            open={menuOpen}
+            onClose={() => { setMenuOpen(false) }}
+            items={menuItems}
+            onSelect={(id) => {
+              setMenuOpen(false)
+              if (id === 'newSession') onNewSession()
+              if (id === 'openInFolder') onOpenInFolder?.()
+              if (id === 'setRoot') onSetRoot()
+              if (id === 'remove') onRemove()
+            }}
+            portal
+            closeOnPointerLeave
+            anchor={(
+              <button
+                type="button"
+                className="wgIconButton"
+                draggable={false}
+                aria-label={`${t('folder.title')} ${node.label}`}
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+              >
+                <IconEllipsisOutlineRegular />
+              </button>
+            )}
+          />
+        </span>
       </span>
     </div>
   )
@@ -613,13 +704,8 @@ export function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, 
 }) {
   const selected = node.id === currentId
   const [menuOpen, setMenuOpen] = useState(false)
-  // The ACTIVE session hands its status slot to the flower: the branch anchors
-  // on this cell (`anchorX` targets `.wgStatusSlot`), so the bloom and the dot
-  // occupy the same 14px square. Drawing both puts the dot's green "ongoing"
-  // ring (or the loading spinner) on top of the petals, which is what made the
-  // flower look broken. The flower already carries this row's state — it turns
-  // exactly while the session runs — so the dot is redundant here anyway.
-  const showStatus = !selected
+  // Keep the active flower inside its own status slot, never in a measured
+  // overlay: scrolling and expanding ancestors must move it with this row.
   const menuItems = [
     { id: 'rename', label: t('session.rename'), icon: <IconEditOutlineRegular /> },
     { id: 'fork', label: t('session.fork'), icon: <IconBranchOutlineRegular /> },
@@ -635,38 +721,45 @@ export function SessionRow({ node, currentId, now, t, onOpen, onRename, onFork, 
       onClick={() => { onOpen(node.id) }}
     >
       <span className="wgStatusSlot">
-        {showStatus && <StateDot state={sessionDotState(node)} />}
+        {selected
+          ? <SessionFlower spinning={node.running || node.runningSubagentCount > 0} />
+          : <StateDot state={sessionDotState(node)} />}
       </span>
       <span className="wgSessionTitle">{node.title}</span>
-      {!node.blank && <span className="wgSessionTime">{relativeTimeLabel(node.updatedAt, now)}</span>}
       {node.snippet !== undefined && (
         <span className="wgSessionSnippet" title={node.snippet}>{node.snippet}</span>
       )}
+      {/* Same trailing slot as groups, workspaces and folders: the time is
+          right-aligned on the row's right edge and yields to the ⋯ button on
+          hover/focus without moving either box (see .wgRowTrail in styles.css). */}
       {!node.blank && (
-        <span className="wgRowActions">
-          <Menu
-            open={menuOpen}
-            onClose={() => { setMenuOpen(false) }}
-            items={menuItems}
-            onSelect={(id) => {
-              setMenuOpen(false)
-              if (id === 'rename') onRename(node.id, node.title)
-              if (id === 'fork') onFork(node.id)
-              if (id === 'archive') onArchive(node.id)
-            }}
-            portal
-            closeOnPointerLeave
-            anchor={(
-              <button
-                type="button"
-                className="wgIconButton"
-                aria-label={`${t('session.rename')} ${node.title}`}
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
-              >
-                <IconEllipsisOutlineRegular />
-              </button>
-            )}
-          />
+        <span className="wgRowTrail">
+          <span className="wgSessionTime">{relativeTimeLabel(node.updatedAt, now)}</span>
+          <span className="wgRowActions">
+            <Menu
+              open={menuOpen}
+              onClose={() => { setMenuOpen(false) }}
+              items={menuItems}
+              onSelect={(id) => {
+                setMenuOpen(false)
+                if (id === 'rename') onRename(node.id, node.title)
+                if (id === 'fork') onFork(node.id)
+                if (id === 'archive') onArchive(node.id)
+              }}
+              portal
+              closeOnPointerLeave
+              anchor={(
+                <button
+                  type="button"
+                  className="wgIconButton"
+                  aria-label={`${t('session.rename')} ${node.title}`}
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(v => !v) }}
+                >
+                  <IconEllipsisOutlineRegular />
+                </button>
+              )}
+            />
+          </span>
         </span>
       )}
     </div>

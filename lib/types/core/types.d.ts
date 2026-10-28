@@ -26,8 +26,9 @@ export type GroupColor = 'red' | 'orange' | 'amber' | 'green' | 'teal' | 'blue' 
 /** Whitelist shared by the host write-validation and the client picker. */
 export declare const GROUP_COLORS: readonly GroupColor[];
 /** Curated icon ids (rendered from @deepseek-ai/dsh-client-ui-primitives). */
-export type GroupIconId = 'folder' | 'workspace' | 'code' | 'plugin' | 'skill' | 'data' | 'database' | 'api' | 'plan' | 'goal' | 'light' | 'globe' | 'archive' | 'branch' | 'users' | 'clock' | 'shield' | 'checklist' | 'sparkle' | 'tree';
-export declare const GROUP_ICON_IDS: readonly GroupIconId[];
+export declare const GROUP_ICON_IDS: readonly ["folder", "workspace", "code", "plugin", "skill", "data", "database", "api", "plan", "goal", "light", "globe", "archive", "branch", "users", "clock", "shield", "checklist", "sparkle", "tree", "chat", "search", "settings", "document", "edit", "think", "agent", "browse", "context", "link", "share", "user", "send", "attachment", "download", "play", "design", "moon", "monitor", "gauge", "queue", "notes", "inspect", "help", "info", "alarm", "compare", "done", "pin", "microphone", "test-tube", "flask", "pipette", "dropper", "stirrer", "hotplate", "centrifuge", "balance", "atom", "molecule", "lattice", "layered", "framework", "thin-film", "fiber", "hydrogel", "microscope", "xrd", "spectrum", "tensile", "electrode", "iv-curve", "illumination", "temperature", "humidity", "actuator", "flex-sensor", "battery"];
+/** Derived from the shared registry so host validation and UI cannot drift. */
+export type GroupIconId = (typeof GROUP_ICON_IDS)[number];
 /**
  * Presentation metadata for one group. Every field optional.
  *
@@ -38,7 +39,7 @@ export declare const GROUP_ICON_IDS: readonly GroupIconId[];
 export interface CategoryAppearance {
     /** Palette id; the CSS palette lives in styles.css `[data-wg-color]`. */
     color?: GroupColor | undefined;
-    /** `GroupIconId` preset id, or a short glyph (1–4 code units, emoji/latin). */
+    /** `GroupIconId` preset id, or a short glyph (1–4 Unicode code points, emoji/latin). */
     icon?: string | undefined;
     /** Pinned groups sort before unpinned ones (within the manual order). */
     pinned?: boolean | undefined;

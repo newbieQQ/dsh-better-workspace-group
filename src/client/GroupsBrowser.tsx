@@ -14,7 +14,7 @@
  * through `PUT /workspace-groups/manual`; the sidecar YAML is never rewritten
  * (rule-group rename/delete ride the overlay `renamed`/`hidden` maps).
  */
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactElement } from 'react'
 import {
   Button,
   IconCloseFillMedium,
@@ -52,16 +52,17 @@ import {
   type ManualGroups,
 } from '../core/types.ts'
 import type { GroupsBrowserProps } from './contract.ts'
-import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, UNCATEGORIZED_KEY, type CategoryNode, type WorkspaceGroupNode } from './tree.ts'
+import { deriveDefaultWorkspace, deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, UNCATEGORIZED_KEY, type CategoryNode, type SearchMatchSet, type SearchTree, type WorkspaceGroupNode } from './tree.ts'
 import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
+import { GROUP_EMOJI_ICONS, GROUP_ICON_LABELS } from './group-icon-labels.ts'
+import { SCIENCE_ICON_IDS, SCIENCE_ICON_SECTIONS } from './group-icons-science.tsx'
 import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, isUnderBase, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
 import { loadFolders, saveFolders } from './folders-persist.ts'
 import { createWorkspaceDirectory, remoteFolderWorkspace } from './folder-directory.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
-import { FlowerBranch } from './FlowerBranch.tsx'
 import css from './styles.css?inline'
 
 const SEARCH_DEBOUNCE_MS = 250
@@ -117,6 +118,38 @@ const COLOR_LABEL_KEYS: Record<GroupColor, WorkspaceGroupsKey> = {
   purple: 'color.purple',
   pink: 'color.pink',
   gray: 'color.gray',
+}
+
+/** Research icon ids, matched against the shared registry for the picker split. */
+const SCIENCE_ICON_ID_SET: ReadonlySet<string> = new Set(SCIENCE_ICON_IDS)
+
+/** Picker section key → i18n key (keeps literal key types intact). */
+const SCIENCE_SECTION_LABEL_KEYS: Record<'lab' | 'materials' | 'characterization' | 'devices', WorkspaceGroupsKey> = {
+  lab: 'group.icon.section.lab',
+  materials: 'group.icon.section.materials',
+  characterization: 'group.icon.section.characterization',
+  devices: 'group.icon.section.devices',
+}
+
+/** The pre-existing glyphs, shown as the picker's "common" section. */
+const COMMON_ICON_IDS = GROUP_ICON_IDS.filter(id => !SCIENCE_ICON_ID_SET.has(id))
+
+/**
+ * The same workspace node without its extra folders and session rows: used
+ * while searching, so the pinned default-workspace bar never paints unrelated
+ * sessions next to pruned search results.
+ */
+function withoutSessions(node: WorkspaceGroupNode): WorkspaceGroupNode {
+  return {
+    workspaceId: node.workspaceId,
+    path: node.path,
+    label: node.label,
+    createdAt: node.createdAt,
+    sessionCount: node.sessionCount,
+    expanded: node.expanded,
+    containsCurrent: node.containsCurrent,
+    sessions: [],
+  }
 }
 
 function sanitizeSearchQuery(value: string): string {
@@ -318,17 +351,6 @@ export function GroupsBrowser({
     ? undefined
     : (workspaces.find(w => w.sessionIds.includes(current as SessionId))?.workspaceId as string | undefined)
 
-  // Whether the open session is WORKING right now, which is what makes the
-  // flower at the branch's endpoint turn. Read from the unified status snapshot
-  // (the catalog summary alone goes stale), folded together with the session's
-  // own `running` so a subagent-only turn still counts.
-  //
-  // Derived as a boolean on purpose: the overlay re-measures through its own
-  // MutationObserver, so handing it a live value would re-render the tree on
-  // every status tick.
-  const currentRunning = current !== undefined
-    && ((statuses.get(current)?.running ?? false) || (list.byId[current]?.running ?? false))
-
   // Auto-expand the category + workspace containing the current session, but
   // ONLY when the user has never touched that key (`Object.hasOwn`): a
   // present `false` is a deliberate collapse and must stay folded. Without
@@ -375,10 +397,6 @@ export function GroupsBrowser({
   })
   const searchInput = useRef<HTMLInputElement | null>(null)
   const searchRoot = useRef<HTMLDivElement | null>(null)
-  // Box the flower branch measures and paints into. Held as a ref (not state)
-  // because the overlay re-measures on its own MutationObserver; a state update
-  // here would re-render the whole tree on every layout tick.
-  const branchScope = useRef<HTMLDivElement | null>(null)
 
   // Search debounce + abort, same posture as the official browser.
   useEffect(() => {
@@ -443,6 +461,37 @@ export function GroupsBrowser({
       collapsedFolders: collapsedFolderKeys,
     }, manual, statuses, foldersDoc),
     [list, workspaces, archivedSessionIds, config, manual, statuses, expandedCategories, expandedWorkspaces, collapsedFolderKeys, foldersDoc],
+  )
+  // The Host's default workspace is not part of the grouping tree: it is pinned
+  // to its own bar at the bottom of the sidebar (see deriveDefaultWorkspace and
+  // the exclusions in tree.ts), while keeping the full workspace-row behaviour.
+  const defaultWorkspace = useMemo(
+    () => deriveDefaultWorkspace(list, workspaces, archivedSessionIds, {
+      expandedCategories,
+      expandedWorkspaces,
+      collapsedFolders: collapsedFolderKeys,
+    }, statuses, foldersDoc),
+    [list, workspaces, archivedSessionIds, statuses, foldersDoc, expandedCategories, expandedWorkspaces, collapsedFolderKeys],
+  )
+  // Search derivation lives here (not inside SearchBody) so the pinned
+  // default-workspace bar can show the very same pruned branch the results use.
+  const activeRemoteSearch = useMemo<RemoteSearchState>(
+    () => (remoteSearch.query === normalizedQuery
+      ? remoteSearch
+      : { query: normalizedQuery, status: 'loading', items: [], hasMore: false }),
+    [remoteSearch, normalizedQuery],
+  )
+  const searchMatches = useMemo<SearchMatchSet | undefined>(
+    () => (normalizedQuery === ''
+      ? undefined
+      : deriveSearchMatches(list, workspaces, config, normalizedQuery, archivedSessionIds, activeRemoteSearch, searchResultLimit)),
+    [list, workspaces, config, normalizedQuery, archivedSessionIds, activeRemoteSearch, searchResultLimit],
+  )
+  const searchTree = useMemo<SearchTree | undefined>(
+    () => (searchMatches === undefined
+      ? undefined
+      : deriveSearchGroups(list, workspaces, config, searchMatches.matchedIds, archivedSessionIds, manual, searchMatches.snippetsBySession, statuses, foldersDoc)),
+    [list, workspaces, config, searchMatches, archivedSessionIds, manual, statuses, foldersDoc],
   )
   // Quick panel (Ctrl+R): category label per grouped workspace id (the tree
   // derivation already resolved grouping; top-level workspaces stay absent).
@@ -1233,7 +1282,37 @@ export function GroupsBrowser({
     }
   }
 
+  // Appearance picker cell: the same glyph button for every icon section
+  // (common presets, the four research sections, and the emoji row).
+  const renderIconCell = (id: string, label: string): ReactElement => (
+    <button
+      key={id}
+      type="button"
+      className="wgIconCell"
+      aria-pressed={appearanceCurrent.icon === id}
+      aria-label={label}
+      title={label}
+      disabled={manualSaving}
+      onClick={() => {
+        setAppearanceDraft({ ...appearanceDraft, icon: id })
+        setAppearanceError(null)
+        if (appearanceTarget !== null) void updateCategoryAppearance(appearanceTarget, { icon: id })
+      }}
+    >
+      <CategoryGlyph icon={id} />
+    </button>
+  )
+
   const now = Date.now()
+
+  // Bottom-bar content. Idle: the default workspace with its real subtree.
+  // Searching: the pruned branch (matched sessions only), or the bare row when
+  // nothing matched — the results area never repeats this workspace.
+  const defaultBarNode = defaultWorkspace === undefined
+    ? undefined
+    : normalizedQuery === ''
+      ? defaultWorkspace
+      : (searchTree?.defaultWorkspace ?? withoutSessions(defaultWorkspace))
 
   return (
     <div className={`wgRoot${wide ? '' : ' wgRail'}`}>
@@ -1345,21 +1424,14 @@ export function GroupsBrowser({
         {manualError !== null && (
           <div className="wgSearchStatus wgManualError" role="alert">{t('manual.saveError')}: {manualError}</div>
         )}
-        {wide && normalizedQuery !== '' ? (
+        {wide && normalizedQuery !== '' && searchTree !== undefined && searchMatches !== undefined ? (
           <SearchBody
-            list={list}
-            workspaces={workspaces}
-            config={config}
-            archivedSessionIds={archivedSessionIds}
-            statuses={statuses}
-            query={normalizedQuery}
-            remote={remoteSearch}
-            resultLimit={searchResultLimit}
+            tree={searchTree}
+            matches={searchMatches}
+            status={activeRemoteSearch.status}
             current={current}
             now={now}
             open={open}
-            manual={manual}
-            folders={foldersDoc}
             t={t}
           />
         ) : (
@@ -1367,10 +1439,11 @@ export function GroupsBrowser({
              the rows and paints behind them, so it must share their box without
              becoming a row itself (which would break role="tree" semantics and
              the index-based measurement). */
-          <div className="wgTreeWrap" ref={branchScope}>
-            <FlowerBranch scope={branchScope.current} spinning={currentRunning} />
+          <div className="wgTreeWrap">
             <div className="wgList" role="tree" aria-label={t('section.workspaces')}>
-            {groups.length === 0 && topLevel.length === 0 && !topLevelDropActive && (
+            {/* The pinned default workspace sits in its own bottom bar, so a tree
+                holding nothing but that workspace is not "empty". */}
+            {groups.length === 0 && topLevel.length === 0 && !topLevelDropActive && defaultBarNode === undefined && (
               <div className="wgEmpty">{workspacePhase === 'ready' ? t('empty.noWorkspaces') : t('empty.none')}</div>
             )}
             {groups.map((category) => (
@@ -1488,6 +1561,53 @@ export function GroupsBrowser({
         )}
       </div>
 
+      {/* Pinned default workspace: a sibling of the tree's scroll area (not a
+          row inside it), above a divider, so a long session list can never
+          push it away or scroll it out. It keeps the whole workspace-row
+          behaviour — toggle, new session, rename, delete, ⋯ menu, folder
+          management — and its sessions still highlight as usual. */}
+      {wide && defaultBarNode !== undefined && (
+        <div className="wgDefaultWorkspaceBar" role="group" aria-label={t('section.defaultWorkspace')}>
+          <WorkspaceRow
+            node={defaultBarNode}
+            t={t}
+            flat
+            onToggle={() => { actions.setWorkspaceExpanded(defaultBarNode.workspaceId as string, !workspaceExpansion[defaultBarNode.workspaceId]) }}
+            onNewSession={() => { startSessionAtRoot(defaultBarNode.workspaceId) }}
+            onRename={() => {
+              setRenameTarget({ workspaceId: defaultBarNode.workspaceId, currentTitle: defaultBarNode.label })
+              setRenameDraft(defaultBarNode.label)
+              setRenameError(null)
+            }}
+            onDelete={() => {
+              setDeleteTarget({ workspaceId: defaultBarNode.workspaceId, title: defaultBarNode.label })
+              setDeleteError(null)
+            }}
+            {...(openInFolder !== undefined
+              ? { onOpenInFolder: () => { openInFolder(defaultBarNode.workspaceId) } }
+              : {})}
+            onManageFolders={() => { setFoldersTarget(defaultBarNode.workspaceId) }}
+          />
+          <WorkspaceSubtree
+            workspace={defaultBarNode}
+            current={current}
+            now={now}
+            t={t}
+            animate={dragging === null}
+            onOpen={open}
+            onSessionRename={onSessionRename}
+            onSessionArchive={onSessionArchive}
+            onFork={forkSession}
+            onToggleFolder={toggleFolder}
+            onFolderNewSession={startSessionInFolder}
+            onFolderSetRoot={setFolderRoot}
+            onFolderRemove={removeFolderFrom}
+            onOpenFolderPath={openFolderPath}
+            creatingFolderKey={creatingSessionIn}
+          />
+        </div>
+      )}
+
       {/* Group create / rename dialog */}
       <Modal
         open={groupDialog !== null}
@@ -1534,18 +1654,23 @@ export function GroupsBrowser({
       </Modal>
 
       {/* Group appearance dialog: every control writes immediately (optimistic
-          patch + rollback banner), so the footer is only "done". */}
+          patch + rollback banner), so the footer is only "done". The body is a
+          single scroll column (the dialog caps itself at the viewport and keeps
+          the footer outside the scroller), and the sections are spaced so a
+          focused field's ring never touches the next control. */}
       <Modal
         open={appearanceTarget !== null}
         onClose={() => { setAppearanceTarget(null) }}
         closeLabel={t('group.appearanceDone')}
         title={t('group.appearanceTitle')}
+        className="wgAppearanceDialog"
+        contentClassName="wgAppearanceContent"
         footer={(
           <Button variant="primary" onClick={() => { setAppearanceTarget(null) }}>{t('group.appearanceDone')}</Button>
         )}
       >
         {appearanceTarget !== null && (
-          <>
+          <div className="wgAppearanceBody">
             <div className="wgAppearanceSection">
               <div className="wgAppearanceLabel">{t('group.color')}</div>
               <div className="wgSwatchRow" role="group" aria-label={t('group.color')}>
@@ -1578,49 +1703,71 @@ export function GroupsBrowser({
             </div>
             <div className="wgAppearanceSection">
               <div className="wgAppearanceLabel">{t('group.icon')}</div>
-              <div className="wgIconGrid" role="group" aria-label={t('group.icon')}>
-                {GROUP_ICON_IDS.map((id) => {
-                  const active = appearanceCurrent.icon === id
+              {/* Categorised picker: the pre-existing presets stay together as
+                  the common section, the research family is split into its four
+                  families, the emoji stay in their own row. The sections share
+                  one height-capped scroller so the footer button is never
+                  pushed out of the dialog. */}
+              <div className="wgIconSections">
+                <div className="wgIconSection">
+                  <div className="wgIconSectionLabel">{t('group.icon.section.common')}</div>
+                  <div className="wgIconGrid" role="group" aria-label={t('group.icon.section.common')}>
+                    {COMMON_ICON_IDS.map(id => renderIconCell(id, GROUP_ICON_LABELS[id]))}
+                  </div>
+                </div>
+                {SCIENCE_ICON_SECTIONS.map(section => {
+                  const label = t(SCIENCE_SECTION_LABEL_KEYS[section.key])
                   return (
-                    <button
-                      key={id}
-                      type="button"
-                      className="wgIconCell"
-                      aria-pressed={active}
-                      aria-label={id}
-                      title={id}
-                      disabled={manualSaving}
-                      onClick={() => {
-                        setAppearanceDraft({ ...appearanceDraft, icon: id })
-                        setAppearanceError(null)
-                        void updateCategoryAppearance(appearanceTarget, { icon: id })
-                      }}
-                    >
-                      <CategoryGlyph icon={id} />
-                    </button>
+                    <div key={section.key} className="wgIconSection">
+                      <div className="wgIconSectionLabel">{label}</div>
+                      <div className="wgIconGrid" role="group" aria-label={label}>
+                        {section.ids.map(id => renderIconCell(id, GROUP_ICON_LABELS[id]))}
+                      </div>
+                    </div>
                   )
                 })}
+                <div className="wgIconSection">
+                  <div className="wgIconSectionLabel">{t('group.icon.section.emoji')}</div>
+                  <div className="wgIconGrid wgEmojiGrid" role="group" aria-label={t('group.icon.section.emoji')}>
+                    {GROUP_EMOJI_ICONS.map(({ icon, label }) => renderIconCell(icon, label))}
+                  </div>
+                </div>
               </div>
-              <input
-                className="wgRenameInput"
-                value={appearanceDraft.icon ?? ''}
-                aria-label={t('group.iconCustom')}
-                placeholder={t('group.iconDefault')}
-                disabled={manualSaving}
-                onChange={(e) => {
-                  setAppearanceDraft({ ...appearanceDraft, icon: e.target.value })
-                  setAppearanceError(null)
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitAppearanceIcon() }}
-                onBlur={(event) => {
-                  /* A swatch / preset click moves focus out of the field in the
-                     same gesture and writes its own patch — committing the stale
-                     draft here would race it and could overwrite the preset. */
-                  const next = event.relatedTarget
-                  if (next instanceof Element && next.closest('.wgSwatch, .wgIconCell') !== null) return
-                  commitAppearanceIcon()
-                }}
-              />
+              <div className="wgIconCustom">
+                <button
+                  type="button"
+                  className="wgIconCell wgIconDefault"
+                  aria-pressed={appearanceCurrent.icon === undefined}
+                  disabled={manualSaving}
+                  onClick={() => {
+                    setAppearanceDraft({ ...appearanceDraft, icon: '' })
+                    setAppearanceError(null)
+                    void updateCategoryAppearance(appearanceTarget, { icon: undefined })
+                  }}
+                >
+                  {t('group.iconDefault')}
+                </button>
+                <input
+                  className="wgRenameInput"
+                  value={appearanceDraft.icon ?? ''}
+                  aria-label={t('group.iconCustom')}
+                  placeholder={t('group.iconDefault')}
+                  disabled={manualSaving}
+                  onChange={(e) => {
+                    setAppearanceDraft({ ...appearanceDraft, icon: e.target.value })
+                    setAppearanceError(null)
+                  }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') commitAppearanceIcon() }}
+                  onBlur={(event) => {
+                    /* A swatch / preset click moves focus out of the field in the
+                       same gesture and writes its own patch — committing the stale
+                       draft here would race it and could overwrite the preset. */
+                    const next = event.relatedTarget
+                    if (next instanceof Element && next.closest('.wgSwatch, .wgIconCell') !== null) return
+                    commitAppearanceIcon()
+                  }}
+                />
+              </div>
             </div>
             <div className="wgAppearanceSection">
               <Button
@@ -1632,7 +1779,7 @@ export function GroupsBrowser({
               </Button>
             </div>
             {appearanceError !== null && <div className="wgAddError" role="alert">{appearanceError}</div>}
-          </>
+          </div>
         )}
       </Modal>
 
@@ -2190,35 +2337,25 @@ function SearchSubtree({ workspace, current, now, open, t }: {
  * Only branches that contain a hit are rendered, which keeps a long list short. Reuses the same row components as
  * the idle tree, so search keeps the same folder hierarchy the user is used to.
  */
-function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, query, remote, resultLimit, current, now, open, manual, folders, t }: {
-  list: SessionListState
-  workspaces: readonly WorkspaceView[]
-  config: GroupsConfig
-  archivedSessionIds: readonly SessionId[]
-  statuses: SessionStatusSnapshot
-  query: string
-  remote: RemoteSearchState
-  resultLimit: number
+/**
+ * Search results, presentational only: the owner derives the tree and the
+ * match set (so the pinned default-workspace bar can share that derivation).
+ * This view never repeats the default workspace — tree.ts leaves it out of the
+ * categories / top-level projections and hands it back as `tree.defaultWorkspace`.
+ */
+function SearchBody({ tree, matches, status, current, now, open, t }: {
+  tree: SearchTree
+  matches: SearchMatchSet
+  status: RemoteSearchState['status']
   current: SessionId | undefined
   now: number
   open: (sessionId: SessionId) => void
-  manual: ManualGroups
-  folders: FoldersDocument
   t: GroupsBrowserProps['t']
 }) {
-  const currentRemote = remote.query === query ? remote : { query, status: 'loading' as const, items: [], hasMore: false }
-  const matches = useMemo(
-    () => deriveSearchMatches(list, workspaces, config, query, archivedSessionIds, currentRemote, resultLimit),
-    [list, workspaces, config, query, archivedSessionIds, currentRemote, resultLimit],
-  )
-  const searchTree = useMemo(
-    () => deriveSearchGroups(list, workspaces, config, matches.matchedIds, archivedSessionIds, manual, matches.snippetsBySession, statuses, folders),
-    [list, workspaces, config, matches, archivedSessionIds, manual, statuses, folders],
-  )
-  const groups = searchTree.categories
-  const searchTopLevel = searchTree.topLevel
-  const pending = currentRemote.status === 'loading'
-  const failed = currentRemote.status === 'error'
+  const groups = tree.categories
+  const searchTopLevel = tree.topLevel
+  const pending = status === 'loading'
+  const failed = status === 'error'
   return (
     <div className="wgList" role="tree" aria-label={t('search.results.aria')}>
       {groups.map((category) => (

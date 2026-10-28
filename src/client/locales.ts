@@ -81,6 +81,12 @@ export type WorkspaceGroupsKey =
   | 'group.iconDefault'
   | 'group.iconCustom'
   | 'group.iconInvalid'
+  | 'group.icon.section.common'
+  | 'group.icon.section.lab'
+  | 'group.icon.section.materials'
+  | 'group.icon.section.characterization'
+  | 'group.icon.section.devices'
+  | 'group.icon.section.emoji'
   | 'color.red'
   | 'color.orange'
   | 'color.amber'
@@ -92,6 +98,7 @@ export type WorkspaceGroupsKey =
   | 'color.pink'
   | 'color.gray'
   | 'section.topLevel'
+  | 'section.defaultWorkspace'
   | 'manual.saveError'
   | 'session.new'
   | 'session.rename'
@@ -217,6 +224,12 @@ export const zh: WorkspaceGroupsDict = {
   'group.iconDefault': '默认图标',
   'group.iconCustom': '自定义字符',
   'group.iconInvalid': '图标需为预设图标或 1–4 个字符',
+  'group.icon.section.common': '常用图标',
+  'group.icon.section.lab': '实验操作',
+  'group.icon.section.materials': '材料结构',
+  'group.icon.section.characterization': '表征测试',
+  'group.icon.section.devices': '功能器件',
+  'group.icon.section.emoji': '常用表情',
   'color.red': '红色',
   'color.orange': '橙色',
   'color.amber': '琥珀',
@@ -228,6 +241,7 @@ export const zh: WorkspaceGroupsDict = {
   'color.pink': '粉色',
   'color.gray': '灰色',
   'section.topLevel': '顶层项目',
+  'section.defaultWorkspace': '默认工作区',
   'manual.saveError': '分组变更保存失败',
   'session.new': '新建会话',
   'session.rename': '重命名会话',
@@ -352,6 +366,12 @@ export const en: WorkspaceGroupsDict = {
   'group.iconDefault': 'Default icon',
   'group.iconCustom': 'Custom character',
   'group.iconInvalid': 'Use a preset icon or 1–4 characters',
+  'group.icon.section.common': 'Common icons',
+  'group.icon.section.lab': 'Lab operations',
+  'group.icon.section.materials': 'Material structures',
+  'group.icon.section.characterization': 'Characterization',
+  'group.icon.section.devices': 'Functional devices',
+  'group.icon.section.emoji': 'Emoji',
   'color.red': 'Red',
   'color.orange': 'Orange',
   'color.amber': 'Amber',
@@ -363,6 +383,7 @@ export const en: WorkspaceGroupsDict = {
   'color.pink': 'Pink',
   'color.gray': 'Gray',
   'section.topLevel': 'Top-level projects',
+  'section.defaultWorkspace': 'Default workspace',
   'manual.saveError': 'Could not save group changes',
   'session.new': 'New Session',
   'session.rename': 'Rename session',

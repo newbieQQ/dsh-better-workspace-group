@@ -106,6 +106,17 @@ const FLOWER_CENTRE = 512
  * @param props - endpoint coordinates and whether the session is working.
  * @returns the bloom group.
  */
+/** In-flow session marker: its position follows the row, including disclosure animations. */
+export function SessionFlower({ spinning }: { spinning: boolean }) {
+  return (
+    <svg width={17} height={17} viewBox="0 0 1024 1024"
+      className={spinning ? 'wgSessionFlower wgFlowerSpinning' : 'wgSessionFlower'}
+      aria-hidden="true" focusable="false" style={{ flex: 'none', overflow: 'visible' }}>
+      <path className="wgFlowerArt" d={FLOWER_PATH} fill={FLOWER_PETAL} />
+    </svg>
+  )
+}
+
 function Flower({ cx, cy, spinning }: { cx: number; cy: number; spinning: boolean }) {
   return (
     <g

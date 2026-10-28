@@ -144,6 +144,24 @@ export declare function deriveGroups(list: SessionListState, workspaces: readonl
  * falling back to host registration order.
  */
 export declare function deriveTopLevel(list: SessionListState, workspaces: readonly WorkspaceView[], archivedSessionIds: readonly SessionId[], config: GroupsConfig, view: GroupsTreeView, manual: ManualGroups, statuses?: SessionStatuses, folders?: FoldersDocument): WorkspaceGroupNode[];
+/**
+ * The Host's default workspace as a standalone node for the pinned bottom bar.
+ *
+ * The default workspace is not part of the grouping tree (it is excluded from
+ * `deriveGroups`, `deriveTopLevel` and the search results), yet it keeps the
+ * full workspace-row behaviour: expansion, session count, its sessions and its
+ * extra folders. This derives exactly that node, reusing the same visibility,
+ * folder partitioning and current-session marking as the tree.
+ *
+ * @param list - sessions list snapshot.
+ * @param workspaces - real workspaces in stable Host order.
+ * @param archivedSessionIds - registry-global archive set.
+ * @param view - local expansion arrays.
+ * @param statuses - unified UI status by Session.
+ * @param folders - per-workspace extra folders + root.
+ * @returns the default workspace node, or undefined when the Host has none.
+ */
+export declare function deriveDefaultWorkspace(list: SessionListState, workspaces: readonly WorkspaceView[], archivedSessionIds: readonly SessionId[], view: GroupsTreeView, statuses?: SessionStatuses, folders?: FoldersDocument): WorkspaceGroupNode | undefined;
 /** Bounded set of matched sessions plus content snippets (feeds the search tree). */
 export interface SearchMatchSet {
     /** Session ids that matched (local metadata hits + Host content hits). */
@@ -167,6 +185,12 @@ export interface SearchTree {
     categories: CategoryNode[];
     /** Top-level (ungrouped) workspaces holding matched sessions. */
     topLevel: WorkspaceGroupNode[];
+    /**
+     * The Host default workspace's matched branch, when it has a hit. It is
+     * rendered in the pinned bottom bar instead of the results list, so a hit
+     * never makes the default workspace appear twice.
+     */
+    defaultWorkspace?: WorkspaceGroupNode;
 }
 /**
  * Build a three-level search tree containing ONLY the branches that hold a

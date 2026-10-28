@@ -36,18 +36,30 @@ export const GROUP_COLORS: readonly GroupColor[] = [
 ]
 
 /** Curated icon ids (rendered from @deepseek-ai/dsh-client-ui-primitives). */
-export type GroupIconId =
-  | 'folder' | 'workspace' | 'code' | 'plugin' | 'skill' | 'data'
-  | 'database' | 'api' | 'plan' | 'goal' | 'light' | 'globe'
-  | 'archive' | 'branch' | 'users' | 'clock' | 'shield' | 'checklist'
-  | 'sparkle' | 'tree'
-
-export const GROUP_ICON_IDS: readonly GroupIconId[] = [
+export const GROUP_ICON_IDS = [
   'folder', 'workspace', 'code', 'plugin', 'skill', 'data',
   'database', 'api', 'plan', 'goal', 'light', 'globe',
   'archive', 'branch', 'users', 'clock', 'shield', 'checklist',
   'sparkle', 'tree',
-]
+  'chat', 'search', 'settings', 'document', 'edit', 'think',
+  'agent', 'browse', 'context', 'link', 'share', 'user',
+  'send', 'attachment', 'download', 'play', 'design', 'moon',
+  'monitor', 'gauge', 'queue', 'notes', 'inspect', 'help',
+  'info', 'alarm', 'compare', 'done', 'pin', 'microphone',
+  // Materials & Lab family (appended: the first 50 ids keep their order because
+  // saved configs address icons by id, never by position).
+  // Lab operations
+  'test-tube', 'flask', 'pipette', 'dropper', 'stirrer', 'hotplate', 'centrifuge', 'balance',
+  // Material structures
+  'atom', 'molecule', 'lattice', 'layered', 'framework', 'thin-film', 'fiber', 'hydrogel',
+  // Characterization
+  'microscope', 'xrd', 'spectrum', 'tensile', 'electrode', 'iv-curve',
+  // Functional devices
+  'illumination', 'temperature', 'humidity', 'actuator', 'flex-sensor', 'battery',
+] as const
+
+/** Derived from the shared registry so host validation and UI cannot drift. */
+export type GroupIconId = (typeof GROUP_ICON_IDS)[number]
 
 /**
  * Presentation metadata for one group. Every field optional.
@@ -59,7 +71,7 @@ export const GROUP_ICON_IDS: readonly GroupIconId[] = [
 export interface CategoryAppearance {
   /** Palette id; the CSS palette lives in styles.css `[data-wg-color]`. */
   color?: GroupColor | undefined
-  /** `GroupIconId` preset id, or a short glyph (1–4 code units, emoji/latin). */
+  /** `GroupIconId` preset id, or a short glyph (1–4 Unicode code points, emoji/latin). */
   icon?: string | undefined
   /** Pinned groups sort before unpinned ones (within the manual order). */
   pinned?: boolean | undefined

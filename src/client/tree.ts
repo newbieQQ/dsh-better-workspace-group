@@ -16,6 +16,7 @@ import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-
 import type { SessionStatus, SessionStatusSnapshot } from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { indexSubagentDescendants, type SubagentDescendantSummary } from './subagent-lineage.ts'
+import { isDefaultWorkspace } from '../core/default-workspace.ts'
 import { categoryAppearance, effectiveCategories, orderedWorkspaceIds, resolveCategory } from '../core/matcher.ts'
 import {
   EMPTY_FOLDERS_DOCUMENT,
@@ -341,6 +342,8 @@ export function deriveGroups(
     byCategory.set(key, [])
   }
   for (const workspace of workspaces) {
+    // The Host default workspace is pinned to its own bottom bar, never grouped.
+    if (isDefaultWorkspace(workspace)) continue
     const key = resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title)
     if (key === undefined) continue // top-level — rendered by deriveTopLevel
     if (!byCategory.has(key)) byCategory.set(key, [])
@@ -429,6 +432,7 @@ export function deriveTopLevel(
     : workspaces.find(w => w.sessionIds.includes(current))?.workspaceId
 
   const topLevelIds = workspaces
+    .filter(w => !isDefaultWorkspace(w))
     .filter(w => resolveCategory(config, manual, w.workspaceId, w.path, w.title) === undefined)
     .map(w => w.workspaceId as string)
   const ordered = orderedWorkspaceIds(manual, TOP_LEVEL_ORDER_KEY, topLevelIds)
@@ -460,6 +464,61 @@ export function deriveTopLevel(
     })
   }
   return nodes
+}
+
+/**
+ * The Host's default workspace as a standalone node for the pinned bottom bar.
+ *
+ * The default workspace is not part of the grouping tree (it is excluded from
+ * `deriveGroups`, `deriveTopLevel` and the search results), yet it keeps the
+ * full workspace-row behaviour: expansion, session count, its sessions and its
+ * extra folders. This derives exactly that node, reusing the same visibility,
+ * folder partitioning and current-session marking as the tree.
+ *
+ * @param list - sessions list snapshot.
+ * @param workspaces - real workspaces in stable Host order.
+ * @param archivedSessionIds - registry-global archive set.
+ * @param view - local expansion arrays.
+ * @param statuses - unified UI status by Session.
+ * @param folders - per-workspace extra folders + root.
+ * @returns the default workspace node, or undefined when the Host has none.
+ */
+export function deriveDefaultWorkspace(
+  list: SessionListState,
+  workspaces: readonly WorkspaceView[],
+  archivedSessionIds: readonly SessionId[],
+  view: GroupsTreeView,
+  statuses: SessionStatuses = new Map(),
+  folders: FoldersDocument = EMPTY_FOLDERS_DOCUMENT,
+): WorkspaceGroupNode | undefined {
+  const workspace = workspaces.find(w => isDefaultWorkspace(w))
+  if (workspace === undefined) return undefined
+  const archived = new Set(archivedSessionIds)
+  const expandedWorkspaces = new Set(view.expandedWorkspaces)
+  const collapsedFolders = new Set(view.collapsedFolders ?? [])
+  const descendants = indexSubagentDescendants(list.byId)
+  const current = currentSessionId(list)
+  const sessions = workspaceSessions(list, workspace, archived, descendants, statuses, current)
+  const wsExpanded = expandedWorkspaces.has(workspace.workspaceId as string)
+  const partitioned = applyFolders(
+    workspace.workspaceId,
+    workspace.path,
+    sessions,
+    list,
+    entryFor(folders, workspace.workspaceId as string),
+    collapsedFolders,
+  )
+  return {
+    workspaceId: workspace.workspaceId,
+    path: workspace.path,
+    label: workspace.title,
+    createdAt: Date.parse(workspace.createdAt),
+    sessionCount: sessions.length,
+    expanded: wsExpanded,
+    containsCurrent: current !== undefined && workspace.sessionIds.includes(current),
+    sessions: wsExpanded ? partitioned.sessions : [],
+    ...(partitioned.folders === undefined ? {} : { folders: partitioned.folders }),
+  }
 }
 
 /** Recency comparator: newest first, id as the deterministic tiebreak. */
@@ -550,6 +609,12 @@ export interface SearchTree {
   categories: CategoryNode[]
   /** Top-level (ungrouped) workspaces holding matched sessions. */
   topLevel: WorkspaceGroupNode[]
+  /**
+   * The Host default workspace's matched branch, when it has a hit. It is
+   * rendered in the pinned bottom bar instead of the results list, so a hit
+   * never makes the default workspace appear twice.
+   */
+  defaultWorkspace?: WorkspaceGroupNode
 }
 
 /**
@@ -593,6 +658,7 @@ export function deriveSearchGroups(
   for (const key of effectiveCategories(config, manual).map(e => e.key)) byCategory.set(key, [])
 
   const topLevel: WorkspaceGroupNode[] = []
+  let defaultWorkspace: WorkspaceGroupNode | undefined
   for (const workspace of workspaces) {
     // Only sessions that matched the query and are visible in this folder.
     const nodes: SessionNode[] = []
@@ -629,6 +695,10 @@ export function deriveSearchGroups(
       sessions: partitioned.sessions,
       ...(partitioned.folders === undefined ? {} : { folders: partitioned.folders }),
     }
+    if (isDefaultWorkspace(workspace)) {
+      defaultWorkspace = node
+      continue
+    }
     const key = resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title)
     if (key === undefined) {
       topLevel.push(node)
@@ -653,5 +723,9 @@ export function deriveSearchGroups(
       ...(appearance === undefined ? {} : { appearance }),
     })
   }
-  return { categories, topLevel }
+  return {
+    categories,
+    topLevel,
+    ...(defaultWorkspace === undefined ? {} : { defaultWorkspace }),
+  }
 }
