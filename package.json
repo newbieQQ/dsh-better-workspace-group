@@ -1,6 +1,6 @@
 {
   "name": "workspace-groups-local",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Complete workspace grouping manager for the DSH web sidebar: category -> project -> session three-level tree with optional per-project folders (multi-root), manual group create/rename/delete, drag-and-drop grouping and ordering with insertion indicator, rule-based auto-classification, tree search, group colour/icon/pin, plus the session tab strip seated in the conversation column head. Sidecar YAML + runtime overlays, zero core-storage intrusion.",
   "keywords": [
     "dsh",
@@ -20,7 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/z-col/dsh-workspace-groups"
+    "url": "https://github.com/newbieQQ/dsh-workspace-groups-local"
+  },
+  "homepage": "https://github.com/newbieQQ/dsh-workspace-groups-local",
+  "bugs": {
+    "url": "https://github.com/newbieQQ/dsh-workspace-groups-local/issues"
   },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -41,6 +45,7 @@
     "cordis.patch.yml",
     "README.md",
     "README_ZH.md",
+    "NOTICE.md",
     "screenshot.png",
     "workspace-groups.example.yaml"
   ],

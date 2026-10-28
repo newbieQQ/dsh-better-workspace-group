@@ -2,11 +2,18 @@
   <strong>English</strong> · <a href="./README_ZH.md">简体中文</a>
 </p>
 
-# dsh-workspace-groups
+# dsh-workspace-groups-local
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Fork of z-col/dsh-workspace-groups](https://img.shields.io/badge/fork-z--col%2Fdsh--workspace--groups-blueviolet.svg)
 ![DSH](https://img.shields.io/badge/DSH-0.1.1--rc.2-purple.svg)
 <img src="https://img.shields.io/badge/DeepSeek%20Harness-plugin-202724" alt="DeepSeek Harness plugin">
+
+> **Fork of [z-col/dsh-workspace-groups](https://github.com/z-col/dsh-workspace-groups).**
+> The three-level tree, drag-and-drop grouping, sidecar rules and session tab strip are the
+> original author's work (MIT); this fork keeps them and adds a research-glyph icon set, a
+> pinned default-workspace bar and a unified trailing row slot — see
+> [Credit & upstream](#credit--upstream).
 
 > **A DeepSeek Harness (DSH) web client plugin: a complete workspace grouping manager.**
 > Turns the GUI sidebar's two-level workspace list (Projects → Sessions) into a
@@ -417,6 +424,39 @@ scripts/
 - 66 unit tests green (vitest: `core` / `manual` / `tree` / `store`).
 - Reproducible automated verification: `node scripts/verify-groups.mjs` (host restarted).
 
+## Credit & upstream
+
+This repository is a **fork** of [**z-col/dsh-workspace-groups**](https://github.com/z-col/dsh-workspace-groups),
+created and maintained by [**zcol**](https://github.com/z-col) (297114876@qq.com), and released
+under the MIT License. The three-level category → project → session tree, drag-and-drop grouping,
+the sidecar YAML rules, the runtime overlay, the top-level ordering and the session tab strip are
+the original author's design and implementation. This fork would not exist without that work —
+thank you.
+
+Upstream stays the canonical project: please report bugs that also exist there to the upstream
+issue tracker, and treat this repository's history (`upstream` remote) as its origin.
+
+Changes carried by this fork (on top of upstream `release: workspace-groups-local 1.0.0`):
+
+- **Materials & lab icon section** in the appearance picker: 28 hand-drawn 16×16 line glyphs
+  (lab operations, material structures, characterization, functional devices) beside the existing
+  50 host icons and 16 emoji, with bilingual tooltips; old ids, custom short glyphs and the
+  "restore default" behaviour are untouched
+- the **appearance dialog scrolls inside the host modal**, so the grown icon grid can never push
+  the "done" footer or the pin button out of reach, in either theme
+- **one right-aligned trailing slot on every row kind**: the member count (or a session's relative
+  time) sits flush with the row's right edge and yields to the `+` / `⋯` buttons on hover or
+  keyboard focus without any reflow; every row orders them `+` then `⋯`
+- the host **default workspace** is pinned to its own **bottom bar** (above it a rule, always
+  visible while the tree scrolls), keeps every workspace-row capability (expand, new session,
+  rename, delete, `⋯` menu, folder management, appearance), and is deduplicated out of groups,
+  the top level and search results — identified from host workspace data, never from a hardcoded
+  directory name alone
+- `tools/verify-row-layout.mjs`: assertions over the stylesheet and the row markup, added because
+  vitest cannot start in the author's checkout (missing `@vitest/utils`, `std-env`)
+
 ## License
 
-MIT
+MIT — original work © 2026 zcol ([z-col/dsh-workspace-groups](https://github.com/z-col/dsh-workspace-groups));
+modifications in this fork © 2026 newbieQQ. See [LICENSE](./LICENSE) and
+[NOTICE.md](./NOTICE.md) for the full attribution and open-source statement.

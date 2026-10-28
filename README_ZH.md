@@ -2,11 +2,17 @@
   <a href="./README.md">English</a> · <strong>简体中文</strong>
 </p>
 
-# dsh-workspace-groups
+# dsh-workspace-groups-local
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Fork of z-col/dsh-workspace-groups](https://img.shields.io/badge/fork-z--col%2Fdsh--workspace--groups-blueviolet.svg)
 ![DSH](https://img.shields.io/badge/DSH-0.1.1--rc.2-purple.svg)
 <img src="https://img.shields.io/badge/DeepSeek%20Harness-plugin-202724" alt="DeepSeek Harness plugin">
+
+> **本仓库是 [z-col/dsh-workspace-groups](https://github.com/z-col/dsh-workspace-groups) 的 fork。**
+> 三层树、拖拽归类、sidecar 规则与会话标签栏均为原作者设计实现（MIT）；本 fork 在其之上
+> 增加了科研图标分区、固定在底部的默认工作区栏、以及统一的右侧尾槽——详见
+> [鸣谢与上游](#鸣谢与上游)。
 
 > **DeepSeek Harness（DSH）Web 客户端插件：完整的工作区分组管理工具。**
 > 把 GUI 侧边栏的工作区列表从两层「项目 → 会话」升级为三层
@@ -356,6 +362,33 @@ scripts/
 - 单测 66 用例全绿（vitest：`core` / `manual` / `tree` / `store`）。
 - 可复跑的自动化真机验证：`node scripts/verify-groups.mjs`（需 host 已重启）。
 
+## 鸣谢与上游
+
+本仓库是 [**z-col/dsh-workspace-groups**](https://github.com/z-col/dsh-workspace-groups) 的
+**fork**，原作者为 [**zcol**](https://github.com/z-col)（297114876@qq.com），以 MIT 许可发布。
+三层「分类 → 项目 → 会话」树、拖拽归类、sidecar YAML 规则、runtime overlay、顶层排序与
+会话标签栏，均出自原作者的设计与实现——没有这些工作就没有本仓库，在此致谢。
+
+上游仍是本项目的正源：若某个问题在上游同样存在，请提交到上游仓库的 issue tracker；
+本仓库以 `upstream` remote 指向它作为来源。
+
+本 fork 在上游 `release: workspace-groups-local 1.0.0` 之上新增/调整的内容：
+
+- 外观弹窗新增 **「材料与实验」图标分区**：28 个统一规格的 16×16 手绘线条字形
+  （实验操作、材料结构、表征测试、功能器件），与原有 50 个宿主图标、16 个 Emoji 并列，
+  带中英双语悬停提示；旧图标 ID、自定义短字形与「恢复默认」行为完全不变
+- **外观弹窗在宿主 Modal 内滚动**：图标区变大后既不会把「完成」按钮挤出视野，也不会让
+  默认图标输入框的聚焦边框贴住「置顶分组」按钮，浅/深主题一致
+- **所有行统一一个右对齐尾槽**：成员数（会话行则是相对时间）贴着行右边界，悬停或键盘
+  聚焦时让位给「＋」「⋯」按钮，零重排；每行都按「＋」在前、「⋯」在后排列
+- 宿主的**默认工作区被固定在侧栏底部独立一栏**（上方分隔线，树滚动时始终可见），保留
+  工作区行的全部能力（展开、新建会话、重命名、删除、`⋯` 菜单、文件夹管理、外观入口），
+  并从分组、顶层与搜索结果中去除重复——识别依据来自宿主工作区数据，而不是只认目录名
+- `tools/verify-row-layout.mjs`：针对样式表与行结构的断言；因为作者本机的 vitest 缺
+  `@vitest/utils`、`std-env` 无法启动，改用零依赖脚本做等价验证
+
 ## License
 
-MIT
+MIT——原始作品 © 2026 zcol（[z-col/dsh-workspace-groups](https://github.com/z-col/dsh-workspace-groups)）；
+本 fork 的修改 © 2026 newbieQQ。完整的署名与开源声明见 [LICENSE](./LICENSE) 与
+[NOTICE.md](./NOTICE.md)。
