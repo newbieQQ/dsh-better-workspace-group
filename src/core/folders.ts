@@ -44,6 +44,22 @@ function isWindowsStyle(path: string): boolean {
 }
 
 /**
+ * One path with trailing separators removed, spelling preserved (no case
+ * folding) — the form to STORE. A drive/UNC/root prefix keeps its separator.
+ * @param path - raw path.
+ */
+function withoutTrailingSeparator(path: string): string {
+  if (isWindowsStyle(path)) {
+    let value = path.replaceAll('/', '\\')
+    while (value.length > 3 && value.endsWith('\\')) value = value.slice(0, -1)
+    return value
+  }
+  let value = path
+  while (value.length > 1 && value.endsWith('/')) value = value.slice(0, -1)
+  return value
+}
+
+/**
  * Comparison form of one path: trimmed, separator-normalized and, for Windows
  * spellings, lower-cased (drive letters and file names are case-insensitive
  * there). Trailing separators are dropped except for a drive/UNC/root prefix.
@@ -52,16 +68,8 @@ function isWindowsStyle(path: string): boolean {
  */
 function canonicalPath(path: string): string {
   const trimmed = path.trim()
-  if (isWindowsStyle(trimmed)) {
-    let value = trimmed.replaceAll('/', '\\').toLowerCase()
-    // `C:\` is three characters and already a root; `\\srv\share\` keeps its
-    // trailing separator only while a further segment remains.
-    while (value.length > 3 && value.endsWith('\\')) value = value.slice(0, -1)
-    return value
-  }
-  let value = trimmed
-  while (value.length > 1 && value.endsWith('/')) value = value.slice(0, -1)
-  return value
+  const value = withoutTrailingSeparator(trimmed)
+  return isWindowsStyle(trimmed) ? value.toLowerCase() : value
 }
 
 /**
@@ -193,4 +201,46 @@ export function setRoot(entry: WorkspaceFolderEntry | undefined, path: string): 
   const match = folders.find(folder => samePath(folder, path))
   if (match === undefined) return { folders: [...folders] }
   return { folders: [...folders], root: match }
+}
+
+/**
+ * True when `path` is `base` itself or lives somewhere below it, with the same
+ * separator and case rules as {@link samePath}.
+ * @param path - candidate path.
+ * @param base - containing directory.
+ */
+export function isUnderBase(path: string, base: string): boolean {
+  const root = canonicalPath(base)
+  const target = canonicalPath(path)
+  if (root === '' || target === '') return false
+  if (target === root) return true
+  const separator = isWindowsStyle(root) ? '\\' : '/'
+  const prefix = root.endsWith(separator) ? root : `${root}${separator}`
+  return target.startsWith(prefix)
+}
+
+/**
+ * Resolve a user-typed SUBPATH against a base directory.
+ *
+ * This is what remote (mirror-backed) workspaces need: their canonical
+ * directory is a local mirror of a remote root, so an extra folder must be a
+ * directory INSIDE the mirror — that is the only spelling that also exists on
+ * the remote side. Absolute input and `..` escapes are rejected outright so a
+ * typo cannot smuggle in an unrelated local directory.
+ * @param base - the workspace's canonical directory.
+ * @param relative - typed subpath, either separator style.
+ * @returns the joined path, or null when the input is empty, absolute, or
+ * escapes the base.
+ */
+export function joinSubpath(base: string, relative: string): string | null {
+  const root = base.trim()
+  const raw = relative.trim()
+  if (root === '' || raw === '') return null
+  if (WINDOWS_DRIVE.test(raw) || WINDOWS_UNC.test(raw) || raw.startsWith('/')) return null
+  const segments = raw.split(/[\\/]+/u).filter(segment => segment !== '' && segment !== '.')
+  if (segments.length === 0) return null
+  if (segments.includes('..')) return null
+  const windows = isWindowsStyle(root)
+  const separator = windows ? '\\' : '/'
+  return `${withoutTrailingSeparator(root)}${separator}${segments.join(separator)}`
 }

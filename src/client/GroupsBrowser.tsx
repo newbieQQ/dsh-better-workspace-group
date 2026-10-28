@@ -55,7 +55,7 @@ import type { GroupsBrowserProps } from './contract.ts'
 import { deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, UNCATEGORIZED_KEY, type CategoryNode, type WorkspaceGroupNode } from './tree.ts'
 import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
-import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
+import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, isUnderBase, joinSubpath, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
 import { loadFolders, saveFolders } from './folders-persist.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { QuickPanel } from './QuickPanel.tsx'
@@ -284,11 +284,17 @@ export function GroupsBrowser({
   const [foldersTarget, setFoldersTarget] = useState<WorkspaceId | null>(null)
   const [foldersBusy, setFoldersBusy] = useState(false)
   const [creatingSessionIn, setCreatingSessionIn] = useState<string | null>(null)
+  // Local mirror root of the remote-ssh plugin, as reported by the host. A
+  // project whose directory lives below it is a REMOTE workspace: its folder is
+  // a mirror of one remote root, so extra folders must be subdirectories of that
+  // mirror — anything else would exist on this machine only.
+  const [foldersRemoteBase, setFoldersRemoteBase] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
-    void loadFolders().then((document) => {
+    void loadFolders().then((snapshot) => {
       if (cancelled) return
-      setFoldersDoc(document)
+      setFoldersDoc(snapshot.document)
+      setFoldersRemoteBase(snapshot.remoteBase ?? null)
     })
     return () => { cancelled = true }
   }, [])
@@ -606,10 +612,22 @@ export function GroupsBrowser({
     setCollapsedFolderKeys(keys => (keys.includes(key) ? keys.filter(k => k !== key) : [...keys, key]))
   }
 
+  const isRemoteWorkspace = (workspace: WorkspaceView): boolean => (
+    foldersRemoteBase !== null && isUnderBase(workspace.path, foldersRemoteBase)
+  )
+
   const addFolderTo = async (workspaceId: WorkspaceId): Promise<void> => {
     if (foldersBusy) return
     const workspace = workspaces.find(w => w.workspaceId === workspaceId)
     if (workspace === undefined) return
+    // A remote workspace's directory is a local MIRROR of one remote root; the
+    // native picker would happily return an unrelated local directory that has
+    // no remote counterpart, so that path is closed off here and the dialog
+    // takes a subpath instead.
+    if (isRemoteWorkspace(workspace)) {
+      notifyFolder(t('folder.remoteNeedsSubpath'))
+      return
+    }
     setFoldersBusy(true)
     try {
       const path = await pickDirectory()
@@ -626,6 +644,29 @@ export function GroupsBrowser({
     } finally {
       setFoldersBusy(false)
     }
+  }
+
+  /**
+   * Add a folder to a REMOTE workspace by typing a path relative to its mirror.
+   * The mirror is a copy of the remote root, so `<mirror>/sub` and remote `sub`
+   * are the same directory — that is the only way an extra folder can mean
+   * something on both sides.
+   */
+  const addSubpathTo = (workspaceId: WorkspaceId, relative: string): void => {
+    if (foldersBusy) return
+    const workspace = workspaces.find(w => w.workspaceId === workspaceId)
+    if (workspace === undefined) return
+    const path = joinSubpath(workspace.path, relative)
+    if (path === null) {
+      notifyFolder(t('folder.subpathInvalid'))
+      return
+    }
+    const entry = entryFor(foldersDoc, workspaceId as string)
+    if (effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))) {
+      notifyFolder(t('folder.duplicate'))
+      return
+    }
+    writeFolderEntry(workspaceId, addFolder(entry, path))
   }
 
   const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {
@@ -1530,8 +1571,10 @@ export function GroupsBrowser({
             t={t}
             busy={foldersBusy}
             canOpen={openFolderPath !== undefined}
+            remote={isRemoteWorkspace(workspace)}
             onClose={() => { setFoldersTarget(null) }}
             onAdd={() => { void addFolderTo(foldersTarget) }}
+            onAddSubpath={(relative) => { addSubpathTo(foldersTarget, relative) }}
             onSetRoot={(path) => { setFolderRoot(foldersTarget, path) }}
             onRemove={(path) => { removeFolderFrom(foldersTarget, path) }}
             onOpenFolder={(path) => { openFolderPath?.(path) }}
@@ -2138,20 +2181,29 @@ function SearchBody({ list, workspaces, config, archivedSessionIds, statuses, qu
  * sessions default to); open/remove act per row, and removing the base folder is
  * never offered because the workspace's canonical directory cannot be dropped.
  */
-function FoldersDialog({ workspace, entry, t, busy, canOpen, onClose, onAdd, onSetRoot, onRemove, onOpenFolder }: {
+function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, onClose, onAdd, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
   workspace: WorkspaceView
   entry: WorkspaceFolderEntry | undefined
   t: GroupsBrowserProps['t']
   busy: boolean
   canOpen: boolean
+  /** Remote (mirror-backed) workspace: extra folders are typed subpaths, not picked. */
+  remote: boolean
   onClose: () => void
   onAdd: () => void
+  onAddSubpath: (relative: string) => void
   onSetRoot: (path: string) => void
   onRemove: (path: string) => void
   onOpenFolder: (path: string) => void
 }) {
   const folders = effectiveFolders(workspace.path, entry)
   const root = rootOf(workspace.path, entry)
+  const [subpath, setSubpath] = useState('')
+  const submitSubpath = (): void => {
+    if (subpath.trim() === '') return
+    onAddSubpath(subpath)
+    setSubpath('')
+  }
   return (
     <Modal
       open
@@ -2207,7 +2259,32 @@ function FoldersDialog({ workspace, entry, t, busy, canOpen, onClose, onAdd, onS
         })}
       </div>
       <div className="wgFolderListFooter">
-        <Button variant="outline" disabled={busy} onClick={onAdd}>{t('folder.add')}</Button>
+        {remote
+          ? (
+            <>
+              <p className="wgFolderHint">{t('folder.remoteHint')}</p>
+              <div className="wgFolderSubpath">
+                <input
+                  type="text"
+                  className="wgFolderSubpathInput"
+                  value={subpath}
+                  placeholder={t('folder.subpathPlaceholder')}
+                  aria-label={t('folder.subpathLabel')}
+                  disabled={busy}
+                  onChange={event => setSubpath(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter') return
+                    event.preventDefault()
+                    submitSubpath()
+                  }}
+                />
+                <Button variant="outline" disabled={busy || subpath.trim() === ''} onClick={submitSubpath}>
+                  {t('folder.addSubpath')}
+                </Button>
+              </div>
+            </>
+          )
+          : <Button variant="outline" disabled={busy} onClick={onAdd}>{t('folder.add')}</Button>}
       </div>
     </Modal>
   )

@@ -89,3 +89,24 @@ export declare function removeFolder(entry: WorkspaceFolderEntry | undefined, pa
  * @param path - folder to make the root.
  */
 export declare function setRoot(entry: WorkspaceFolderEntry | undefined, path: string): WorkspaceFolderEntry;
+/**
+ * True when `path` is `base` itself or lives somewhere below it, with the same
+ * separator and case rules as {@link samePath}.
+ * @param path - candidate path.
+ * @param base - containing directory.
+ */
+export declare function isUnderBase(path: string, base: string): boolean;
+/**
+ * Resolve a user-typed SUBPATH against a base directory.
+ *
+ * This is what remote (mirror-backed) workspaces need: their canonical
+ * directory is a local mirror of a remote root, so an extra folder must be a
+ * directory INSIDE the mirror — that is the only spelling that also exists on
+ * the remote side. Absolute input and `..` escapes are rejected outright so a
+ * typo cannot smuggle in an unrelated local directory.
+ * @param base - the workspace's canonical directory.
+ * @param relative - typed subpath, either separator style.
+ * @returns the joined path, or null when the input is empty, absolute, or
+ * escapes the base.
+ */
+export declare function joinSubpath(base: string, relative: string): string | null;

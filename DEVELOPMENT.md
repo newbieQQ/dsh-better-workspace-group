@@ -37,7 +37,7 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 | `src/index.ts` | 插件入口。`inject = ['webServer']`，注册 4 组路由：`GET /workspace-groups/config`、`GET|PUT /workspace-groups/tabs`、`PUT /workspace-groups/manual`、`GET|PUT /workspace-groups/folders` |
 | `src/host-config.ts` | 读用户 YAML 分类规则（默认 `~/.dsh/workspace-groups.yaml`），校验后以 JSON 下发 |
 | `src/host-manual.ts` | 运行期分组覆盖（手动分组 + 单工作区归类覆盖），落 `$DSH_HOME/workspace-groups.manual.json` |
-| `src/host-folders.ts` | 每个工作区的额外文件夹 + 根目录，落 `$DSH_HOME/workspace-groups.folders.json`（写时严格、读时宽容） |
+| `src/host-folders.ts` | 每个工作区的额外文件夹 + 根目录，落 `$DSH_HOME/workspace-groups.folders.json`（写时严格、读时宽容）。另提供 `defaultRemoteMirrorBase()`：`~/.dsh/remote-workspaces`，即 `@zhangfengshun/dsh-remote-ssh` 的本地镜像根，GET 时随文档下发 |
 | `src/host-tabs.ts` | 会话标签条的宿主侧持久化。放在宿主是因为**浏览器存储按 origin 隔离，而 origin 含端口**，`dsh web`/测试/桌面壳端口各不相同 |
 | `src/context-types.ts` | 本插件消费的 cordis 服务结构类型（第三方插件拿不到 monorepo 内的 `declare module` 合并） |
 
@@ -47,7 +47,7 @@ git 历史里 `942babe` 及更早的提交原样保留；重建工作作为 `b30
 | --- | --- |
 | `src/core/types.ts` | 规则配置类型，零运行时依赖 |
 | `src/core/matcher.ts` | 归类与排序的纯函数：工作区归哪个分类、分类/工作区怎么排。宿主校验与客户端建树共用，语义不会漂移 |
-| `src/core/folders.ts` | 多文件夹的纯函数：有效文件夹列表、根目录解析、cwd 归属（最具体优先）。宿主校验与客户端建树共用 |
+| `src/core/folders.ts` | 多文件夹的纯函数：有效文件夹列表、根目录解析、cwd 归属（最具体优先）、镜像判定与相对子路径拼装（`isUnderBase` / `joinSubpath`）。宿主校验与客户端建树共用 |
 
 浏览器半边（`src/client/`，输出 CJS 闭包工厂）：
 
@@ -173,3 +173,9 @@ $installed = "C:\Users\qyh15\.dsh\profiles\desktop\node_modules\@dsh-xhl\workspa
   新字段在 `restore*` 里必须原样带过去（`pinned`/`title` 漏带就等于重启丢配置）。
 - **package 版本号语义混乱**：仓库 HEAD 里是 `0.1.0`，但提交里写 `feat(v0.7)`；
   重建树统一对齐到安装版的 `0.4.2`。发布前自己定一版号。
+- **远程（`@zhangfengshun/dsh-remote-ssh`）工作区是镜像，不是真实远端目录**：它用
+  `workspaceRegistry.create(mirrorDir)` 把远端根登记成普通工作区，`mirrorDir` 就是
+  `~/.dsh/remote-workspaces/<workspaceId>`。所以对付这类项目时：
+  额外文件夹只能是镜像内子目录（用 `joinSubpath` 拼、`isUnderBase` 判定，**绝不要让
+  用户用原生选择器挑任意本地目录**）；`cwd` 分区逻辑照常可用，因为会话本身也在本地跑。
+  真正"服务器上另一个根目录"应当由 SSH 插件单独建成工作区，再用分组归到一起。

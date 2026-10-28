@@ -22,6 +22,8 @@ const {
   effectiveFolders,
   entryFor,
   folderOfCwd,
+  isUnderBase,
+  joinSubpath,
   removeFolder,
   rootOf,
   samePath,
@@ -140,6 +142,34 @@ try {
   equal(await readFoldersDocument(path), valid, 'atomic write round-trips through the reader')
 } finally {
   await rm(dir, { recursive: true, force: true })
+}
+
+// --- remote (mirror) workspaces ----------------------------------------------
+// A remote-ssh workspace is an ordinary workspace whose directory is a local
+// mirror, so extra folders must resolve INSIDE the mirror.
+const MIRROR_BASE = 'C:\\Users\\me\\.dsh\\remote-workspaces'
+const MIRROR_WS = `${MIRROR_BASE}\\ws-1`
+check(isUnderBase(MIRROR_WS, MIRROR_BASE), 'a mirror workspace lives under the mirror base')
+check(isUnderBase(`${MIRROR_WS}\\sub`, MIRROR_BASE), 'a mirror subdirectory lives under the mirror base')
+check(isUnderBase('C:/Users/ME/.dsh/remote-workspaces/ws-1', MIRROR_BASE), 'mirror detection folds separators and case')
+check(!isUnderBase('C:\\work\\project', MIRROR_BASE), 'an ordinary project is not a mirror')
+check(!isUnderBase('C:\\Users\\me\\.dsh\\remote-workspaces-other\\ws', MIRROR_BASE), 'a name prefix is not inside the base')
+
+equal(joinSubpath(MIRROR_WS, 'data'), `${MIRROR_WS}\\data`, 'subpath joins under the mirror')
+equal(joinSubpath(MIRROR_WS, 'src/generated/'), `${MIRROR_WS}\\src\\generated`, 'subpath normalizes separators and drops a trailing slash')
+equal(joinSubpath('/home/me/mirror/ws', 'data/raw'), '/home/me/mirror/ws/data/raw', 'POSIX mirrors join with slashes')
+equal(joinSubpath(MIRROR_WS, '  '), null, 'a blank subpath is rejected')
+equal(joinSubpath(MIRROR_WS, '..\\escape'), null, 'a parent traversal is rejected')
+equal(joinSubpath(MIRROR_WS, 'a/../..'), null, 'an embedded traversal is rejected')
+equal(joinSubpath(MIRROR_WS, 'D:\\absolute'), null, 'a Windows absolute path is rejected')
+equal(joinSubpath(MIRROR_WS, '/absolute'), null, 'a POSIX absolute path is rejected')
+equal(joinSubpath(MIRROR_WS, './ok'), `${MIRROR_WS}\\ok`, 'a leading dot segment is dropped')
+
+// A remote workspace's typed subpath then behaves like any other extra folder.
+{
+  const entry = addFolder(undefined, joinSubpath(MIRROR_WS, 'data'))
+  equal(effectiveFolders(MIRROR_WS, entry), [MIRROR_WS, `${MIRROR_WS}\\data`], 'a typed mirror subpath becomes an extra folder')
+  equal(folderOfCwd(`${MIRROR_WS}\\data\\file`, MIRROR_WS, entry), `${MIRROR_WS}\\data`, 'sessions under the mirror subpath belong to it')
 }
 
 // Success is a single machine-checkable line: the harness pastes this output.

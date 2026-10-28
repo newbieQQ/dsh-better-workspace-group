@@ -645,6 +645,39 @@
   margin-top:8px;
 }
 
+/* Remote (mirror-backed) workspaces add a folder by typed subpath, so the
+   footer grows a hint + input row instead of the picker button. */
+.wgFolderHint {
+  color:var(--dsw-alias-label-secondary,inherit);
+  margin:0 0 6px;
+  font-size:12px;
+  line-height:1.5;
+  opacity:.85;
+}
+
+.wgFolderSubpath {
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+
+.wgFolderSubpathInput {
+  flex:1 1 auto;
+  min-width:0;
+  padding:4px 8px;
+  border:1px solid var(--dsw-alias-border-l2,#7f7f7f40);
+  border-radius:6px;
+  background:var(--dsw-alias-bg-base,transparent);
+  color:inherit;
+  font:inherit;
+  font-size:13px;
+}
+
+.wgFolderSubpathInput:focus {
+  outline:none;
+  border-color:var(--dsw-alias-label-primary,currentColor);
+}
+
 /* Appearance dialog: colour swatches, icon picker grid, pin toggle. */
 .wgAppearanceSection {
   display:flex;

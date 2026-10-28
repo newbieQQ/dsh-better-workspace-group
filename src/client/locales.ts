@@ -47,6 +47,12 @@ export type WorkspaceGroupsKey =
   | 'folder.addError'
   | 'folder.sessionError'
   | 'folder.saveError'
+  | 'folder.remoteHint'
+  | 'folder.remoteNeedsSubpath'
+  | 'folder.subpathLabel'
+  | 'folder.subpathPlaceholder'
+  | 'folder.addSubpath'
+  | 'folder.subpathInvalid'
   | 'group.create'
   | 'group.createTitle'
   | 'group.createPlaceholder'
@@ -175,6 +181,12 @@ export const zh: WorkspaceGroupsDict = {
   'folder.addError': '添加文件夹失败',
   'folder.sessionError': '新建会话失败',
   'folder.saveError': '文件夹保存失败',
+  'folder.remoteHint': '远程（SSH）工作区：本地目录是服务器根目录的镜像，所以这里只能添加镜像内的子目录，填相对路径即可（也会同步到服务器同名目录）',
+  'folder.remoteNeedsSubpath': '远程工作区请用子目录方式添加文件夹',
+  'folder.subpathLabel': '相对路径',
+  'folder.subpathPlaceholder': '例如 data 或 src/generated',
+  'folder.addSubpath': '添加子目录',
+  'folder.subpathInvalid': '路径无效：请填工作区内的相对路径，不能用绝对路径或 ..',
   'group.create': '新建分组',
   'group.createTitle': '新建分组',
   'group.createPlaceholder': '分组名称',
@@ -302,6 +314,12 @@ export const en: WorkspaceGroupsDict = {
   'folder.addError': 'Could not add the folder',
   'folder.sessionError': 'Could not start a session',
   'folder.saveError': 'Could not save folders',
+  'folder.remoteHint': 'Remote (SSH) workspace: the local directory mirrors the server root, so only subdirectories of that mirror can be added here — type a path relative to the workspace root',
+  'folder.remoteNeedsSubpath': 'Remote workspaces take a subdirectory, not a picked folder',
+  'folder.subpathLabel': 'Relative path',
+  'folder.subpathPlaceholder': 'e.g. data or src/generated',
+  'folder.addSubpath': 'Add subdirectory',
+  'folder.subpathInvalid': 'Invalid path: use a relative path inside the workspace (no absolute paths, no ..)',
   'group.create': 'New group',
   'group.createTitle': 'New group',
   'group.createPlaceholder': 'Group name',

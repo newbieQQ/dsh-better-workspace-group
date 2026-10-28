@@ -94,6 +94,13 @@
   clicking it twice reuses the blank session instead of stacking empty ones
 - Folders start expanded, so attaching one never hides sessions that were already visible;
   collapse state is per-view and intentionally not persisted
+- **Remote (SSH) projects are mirror-backed**: `@zhangfengshun/dsh-remote-ssh` registers a
+  remote workspace as an ordinary workspace whose directory is a LOCAL mirror
+  (`<home>/.dsh/remote-workspaces/<workspaceId>`) of the remote root. For those projects the
+  dialog swaps the folder picker for a **relative-path field**, so an extra folder is always a
+  subdirectory of that mirror — i.e. a directory that also exists on the server. Picking an
+  unrelated local directory is refused, because a session there would never sync: a separate
+  remote root should be its own workspace (add it with the SSH plugin), grouped next to this one
 
 ### Search & operations
 - **Tree-shaped search**: results keep the three-level structure (category → project → matched

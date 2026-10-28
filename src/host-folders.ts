@@ -48,6 +48,23 @@ export function defaultFoldersPath(): string {
 }
 
 /**
+ * Local mirror root of `@zhangfengshun/dsh-remote-ssh`.
+ *
+ * That plugin registers every remote workspace as an ordinary DSH workspace
+ * whose canonical directory is a LOCAL mirror (`<homedir>/.dsh/remote-workspaces/
+ * <workspaceId>`) and keeps the real remote path in its own records. Telling the
+ * browser this base lets it treat such workspaces differently: their extra
+ * folders must be subdirectories of the mirror, because only those also exist on
+ * the remote side.
+ *
+ * The path is hardcoded there (not read from `DSH_HOME`), so it is hardcoded
+ * here too — a mismatch would silently disable the distinction.
+ */
+export function defaultRemoteMirrorBase(): string {
+  return resolve(homedir(), '.dsh', 'remote-workspaces')
+}
+
+/**
  * True when `path` is absolute in the host platform's spelling: a drive
  * letter or UNC prefix on Windows, a leading slash elsewhere.
  * @param path - candidate path.

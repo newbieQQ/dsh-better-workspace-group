@@ -21,6 +21,17 @@ import {
 /** Host route holding the folder overlay. */
 export const FOLDERS_ROUTE = '/workspace-groups/folders'
 
+/** One successful read: the overlay plus the mirror base the host reported. */
+export interface FoldersSnapshot {
+  readonly document: FoldersDocument
+  /**
+   * Local mirror root of the remote-ssh plugin, when the host named one.
+   * Workspaces whose directory lives below it are remote mirrors, so their extra
+   * folders must be subdirectories of that same mirror.
+   */
+  readonly remoteBase?: string
+}
+
 /**
  * Read one workspace entry off the wire, dropping the entry when it is
  * unusable.
@@ -43,31 +54,36 @@ function parseWireEntry(value: unknown): WorkspaceFolderEntry | null {
 /**
  * Fetch the stored folder overlay.
  * @param fetchImpl - fetch implementation (injectable for tests).
- * @returns the document; the empty document on any failure.
+ * @returns the overlay plus the reported mirror base; the empty document on any
+ * failure.
  */
-export async function loadFolders(fetchImpl: typeof fetch = fetch): Promise<FoldersDocument> {
+export async function loadFolders(fetchImpl: typeof fetch = fetch): Promise<FoldersSnapshot> {
   try {
     const response = await fetchImpl(FOLDERS_ROUTE, {
       method: 'GET',
       // Folders are user state; a cached response would show stale rows.
       cache: 'no-store',
     })
-    if (!response.ok) return EMPTY_FOLDERS_DOCUMENT
+    if (!response.ok) return { document: EMPTY_FOLDERS_DOCUMENT }
     const body: unknown = await response.json()
-    if (typeof body !== 'object' || body === null) return EMPTY_FOLDERS_DOCUMENT
+    if (typeof body !== 'object' || body === null) return { document: EMPTY_FOLDERS_DOCUMENT }
     const source = body as Record<string, unknown>
-    if (source.version !== 1) return EMPTY_FOLDERS_DOCUMENT
+    const remoteBase = typeof source.remoteBase === 'string' && source.remoteBase.trim() !== ''
+      ? source.remoteBase.trim()
+      : undefined
+    const base = remoteBase === undefined ? {} : { remoteBase }
+    if (source.version !== 1) return { document: EMPTY_FOLDERS_DOCUMENT, ...base }
     if (typeof source.workspaces !== 'object' || source.workspaces === null || Array.isArray(source.workspaces)) {
-      return { version: 1, workspaces: {} }
+      return { document: { version: 1, workspaces: {} }, ...base }
     }
     const workspaces: Record<string, WorkspaceFolderEntry> = {}
     for (const [workspaceId, value] of Object.entries(source.workspaces)) {
       const entry = parseWireEntry(value)
       if (entry !== null) workspaces[workspaceId] = entry
     }
-    return { version: 1, workspaces }
+    return { document: { version: 1, workspaces }, ...base }
   } catch {
-    return EMPTY_FOLDERS_DOCUMENT
+    return { document: EMPTY_FOLDERS_DOCUMENT }
   }
 }
 

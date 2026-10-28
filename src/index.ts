@@ -41,6 +41,7 @@ import {
 } from './host-tabs.ts'
 import {
   defaultFoldersPath,
+  defaultRemoteMirrorBase,
   readFoldersDocument,
   validateFoldersDocument,
   writeFoldersDocument,
@@ -249,9 +250,11 @@ export function apply(ctx: GroupsContext): void {
     handler: async (req, res) => {
       if (req.method === 'GET' || req.method === 'HEAD') {
         // The reader is tolerant by construction (a missing or torn sidecar is
-        // the empty document), so it cannot fail a GET.
+        // the empty document), so it cannot fail a GET. `remoteBase` rides along
+        // so the browser knows which projects are remote-ssh mirrors and must
+        // only accept subdirectories of their own mirror as extra folders.
         const document = await readFoldersDocument(foldersPath)
-        const body = JSON.stringify(document)
+        const body = JSON.stringify({ ...document, remoteBase: defaultRemoteMirrorBase() })
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Cache-Control': 'no-store',
