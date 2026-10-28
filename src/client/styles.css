@@ -92,26 +92,28 @@
    sit outside the tree's scroll area, so a long session list can never push
    them away. The dock owns the divider against the tree; the default-workspace
    bar adds a second one only when the bucket sits above it.
-   The dock is a bounded, opaque panel: it may shrink (never grow past its cap),
-   clips its own overflow, and scrolls its expanded session list internally — so
-   an expanded default workspace can never be cut off mid-row by the sidebar's
-   bottom edge, and nothing from the tree ever shows through it. */
+   The dock is bounded: it never grows past its cap, and it never shrinks below
+   the height of its own rows. Only the expanded session list gives up height
+   and scrolls, so no row is ever cut in half (a halved row reads as an overlap)
+   and nothing from the tree is painted underneath the dock. */
 .wgDock {
   flex:0 1 auto;
   min-width:0;
-  min-height:0;
+  /* Never shrink below the dock's own rows: a clipped row would look like an
+     overlap. The session list is the only child allowed to give up height. */
+  min-height:min-content;
   max-height:min(62vh,560px);
   display:flex;
   flex-direction:column;
   overflow:hidden;
   border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f47);
-  background:var(--dsw-bg-1,transparent);
 }
 
-/* The docked bucket scrolls on its own and never grows past a fixed share of
-   the sidebar: a big "not classified yet" pile must not swallow the tree. */
+/* The docked bucket never gives up height to the expanded session list (a
+   squeezed bucket would clip its own row in half); it scrolls on its own past a
+   fixed share of the sidebar so a big pile cannot swallow the tree. */
 .wgDockBucket {
-  flex:0 1 auto;
+  flex:0 0 auto;
   min-width:0;
   min-height:0;
   max-height:min(240px,38vh);
