@@ -2,7 +2,7 @@
   <strong>English</strong> · <a href="./README_ZH.md">简体中文</a>
 </p>
 
-# dsh-workspace-groups-local
+# dsh-better-workspace-group
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Fork of z-col/dsh-workspace-groups](https://img.shields.io/badge/fork-z--col%2Fdsh--workspace--groups-blueviolet.svg)

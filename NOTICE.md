@@ -2,7 +2,7 @@
 
 ## 中文
 
-**本仓库** `newbieQQ/dsh-workspace-groups-local`
+**本仓库** `newbieQQ/dsh-better-workspace-group`
 （DSH Web 客户端插件，npm 包名 `workspace-groups-local`）是下列作品的**衍生版本（fork）**：
 
 - **原始项目**：https://github.com/z-col/dsh-workspace-groups
@@ -41,7 +41,7 @@
 
 ## English
 
-**This repository**, `newbieQQ/dsh-workspace-groups-local` (a DeepSeek Harness web-client
+**This repository**, `newbieQQ/dsh-better-workspace-group` (a DeepSeek Harness web-client
 plugin, npm package name `workspace-groups-local`), is a **fork** of:
 
 - **Original project**: https://github.com/z-col/dsh-workspace-groups

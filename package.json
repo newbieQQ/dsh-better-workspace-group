@@ -20,11 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/newbieQQ/dsh-workspace-groups-local"
+    "url": "https://github.com/newbieQQ/dsh-better-workspace-group"
   },
-  "homepage": "https://github.com/newbieQQ/dsh-workspace-groups-local",
+  "homepage": "https://github.com/newbieQQ/dsh-better-workspace-group",
   "bugs": {
-    "url": "https://github.com/newbieQQ/dsh-workspace-groups-local/issues"
+    "url": "https://github.com/newbieQQ/dsh-better-workspace-group/issues"
   },
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
