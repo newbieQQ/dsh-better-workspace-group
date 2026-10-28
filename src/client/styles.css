@@ -118,7 +118,7 @@
   flex:0 0 auto;
   min-width:0;
   min-height:0;
-  max-height:min(240px,38vh);
+  max-height:min(26vh,200px);
   padding:4px 8px 0;
   overflow-x:hidden;
   overflow-y:auto;
@@ -147,6 +147,10 @@
   flex:1 1 auto;
   min-width:0;
   min-height:0;
+  /* A share of its own, not "whatever is left": with the tree and the bucket
+     also expanded, the session list stops growing at about a third of the
+     sidebar and scrolls instead of pushing the other two out of view. */
+  max-height:min(26vh,400px);
   overflow-x:hidden;
   overflow-y:auto;
 }
