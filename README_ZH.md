@@ -134,14 +134,14 @@ DeepSeek峰谷小组件 等）归入一个「DSH 插件」分类文件夹，点�
 > （`dsh` 命令可用），并已初始化好目标 profile（如内置 `web`）。
 
 ```sh
-dsh plugin --profile web add github:z-col/dsh-workspace-groups
+dsh plugin --profile web add github:newbieQQ/dsh-better-workspace-group
 ```
 
 这会自动：
 
 1. 在 `~/.dsh/profiles/web/package.json` 的 `dependencies` 加入
-   `"dsh-workspace-groups": "github:z-col/dsh-workspace-groups"`（含版本/commit）
-2. 在 `dsh.profile.bundles` 末尾追加 `"dsh-workspace-groups"`
+  `"workspace-groups-local": "github:newbieQQ/dsh-better-workspace-group"`（含版本/commit）
+2. 在 `dsh.profile.bundles` 末尾追加 `"workspace-groups-local"`
 3. 运行 pnpm 安装并校验 bundle 层
 
 **安装后重启 web profile**（bundle 与 host 半只有在重启后才会被加载）：
@@ -155,7 +155,7 @@ dsh web
 
 ```sh
 dsh --profile web --dump-config | grep -A3 workspace-groups
-# 应出现 - id: workspace-groups / name: dsh-workspace-groups / config: {}
+# 应出现 - id: workspace-groups / name: workspace-groups-local / config: {}
 curl http://127.0.0.1:3080/workspace-groups/config
 # 应返回 sidecar YAML 解析后的 JSON
 ```
@@ -163,15 +163,15 @@ curl http://127.0.0.1:3080/workspace-groups/config
 ## 卸载
 
 ```sh
-dsh plugin --profile web remove dsh-workspace-groups
+dsh plugin --profile web remove workspace-groups-local
 ```
 
 这会自动从 `dependencies` 删除该依赖并从 `dsh.profile.bundles` 移除对应行。
 同样需要**重启 web profile** 后生效。
 
 > 手动等价做法（任选其一，不要重复）：编辑 `~/.dsh/profiles/web/package.json`，
-> 从 `dependencies` 删除 `dsh-workspace-groups` 行、从 `dsh.profile.bundles`
-> 删除 `"dsh-workspace-groups"`，然后在该目录 `pnpm install`。
+> 从 `dependencies` 删除 `workspace-groups-local` 行、从 `dsh.profile.bundles`
+> 删除 `"workspace-groups-local"`，然后在该目录 `pnpm install`。
 
 ## 分类配置（sidecar）
 

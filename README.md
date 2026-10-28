@@ -162,14 +162,14 @@
 > installed (`dsh` available) with a target profile initialized (e.g. the built-in `web`).
 
 ```sh
-dsh plugin --profile web add github:z-col/dsh-workspace-groups
+dsh plugin --profile web add github:newbieQQ/dsh-better-workspace-group
 ```
 
 This automatically:
 
-1. Adds `"dsh-workspace-groups": "github:z-col/dsh-workspace-groups"` (pinned to
+1. Adds `"workspace-groups-local": "github:newbieQQ/dsh-better-workspace-group"` (pinned to
    version/commit) to `dependencies` in `~/.dsh/profiles/web/package.json`
-2. Appends `"dsh-workspace-groups"` to `dsh.profile.bundles`
+2. Appends `"workspace-groups-local"` to `dsh.profile.bundles`
 3. Runs pnpm install and validates the bundle layer
 
 **Restart the web profile after installing** (both the bundle and the host half only load
@@ -184,7 +184,7 @@ Verify the install:
 
 ```sh
 dsh --profile web --dump-config | grep -A3 workspace-groups
-# expect: - id: workspace-groups / name: dsh-workspace-groups / config: {}
+# expect: - id: workspace-groups / name: workspace-groups-local / config: {}
 curl http://127.0.0.1:3080/workspace-groups/config
 # expect: the sidecar YAML parsed as JSON
 ```
@@ -192,7 +192,7 @@ curl http://127.0.0.1:3080/workspace-groups/config
 ## Uninstall
 
 ```sh
-dsh plugin --profile web remove dsh-workspace-groups
+dsh plugin --profile web remove workspace-groups-local
 ```
 
 This removes the dependency from `dependencies` and the matching line from
