@@ -110,13 +110,14 @@
   border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f47);
 }
 
-/* The docked bucket gives up height only down to one full row, never below it
-   (a shorter bucket would clip its own row in half); past its cap it scrolls,
-   so a big pile cannot swallow the tree. */
+/* The docked bucket never gives up height: it must be able to open its own
+   children (a shrinkable bucket stays one row tall however far it is expanded,
+   which reads as "cannot expand"). Past its cap it scrolls, so a big pile still
+   cannot swallow the tree; the session list below is what gives way. */
 .wgDockBucket {
-  flex:0 1 auto;
+  flex:0 0 auto;
   min-width:0;
-  min-height:32px;
+  min-height:0;
   max-height:min(240px,38vh);
   padding:4px 8px 0;
   overflow-x:hidden;
