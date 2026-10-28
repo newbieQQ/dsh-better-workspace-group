@@ -52,7 +52,7 @@ import {
 } from './host-folders.ts'
 
 /** Plugin identity for cordis.yml rows. */
-export const name = '@dsh-xhl/workspace-groups'
+export const name = 'workspace-groups-local'
 
 /** Services required before mounting: the webserver route. */
 export const inject = ['webServer']

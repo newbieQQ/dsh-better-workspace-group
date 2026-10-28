@@ -256,7 +256,7 @@ export function apply(ctx: Context): void {
       store: createGroupsViewStore(),
       inject: browserInjected,
       locale: NS,
-      registrant: '@dsh-xhl/workspace-groups',
+      registrant: 'workspace-groups-local',
     },
     GroupsBrowser,
   ))
