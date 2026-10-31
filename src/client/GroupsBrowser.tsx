@@ -1,8 +1,7 @@
 /**
  * The workspace-groups browsing region filling the sidebar shell's
  * `sidebar.workspaces` hole: section header (title + right-aligned search +
- * new-group + add workspace), the three-level tree (category — workspace —
- * session), group management dialogs, and the workspace/session dialogs. Wide
+ * new-group + add workspace), the three-level tree (category —workspace — * session), group management dialogs, and the workspace/session dialogs. Wide
  * state renders the full browser; rail state renders the two region icons
  * (search / add workspace) as 36px controls on the shell's shared rail entry
  * path, each requesting expansion through the owner share.
@@ -21,7 +20,6 @@ import {
   IconFolderOpenOutlineRegular,
   IconProjectAddOutlineRegular,
   IconSearchOutlineRegular,
-  IconTrashOutlineRegular,
   IconWarningOutlineRegular,
   Modal,
   Toast,
@@ -52,15 +50,16 @@ import {
   type ManualGroups,
 } from '../core/types.ts'
 import type { GroupsBrowserProps } from './contract.ts'
-import { deriveDefaultWorkspace, deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, folderLabel, isDockedCategoryKey, UNCATEGORIZED_KEY, type CategoryNode, type SearchMatchSet, type SearchTree, type WorkspaceGroupNode } from './tree.ts'
+import { deriveDefaultWorkspace, deriveGroups, deriveSearchGroups, deriveSearchMatches, deriveTopLevel, currentSessionId, folderKey, isDockedCategoryKey, memberWorkspaces, UNCATEGORIZED_KEY, type CategoryNode, type SearchMatchSet, type SearchTree, type WorkspaceGroupNode } from './tree.ts'
 import { CategoryGlyph, CategoryRow, DND_CATEGORY_TYPE, DND_WORKSPACE_TYPE, FolderRow, hasPluginDragType, RowGroup, SessionRow, WorkspaceRow } from './rows.tsx'
 import type { WorkspaceGroupsKey } from './locales.ts'
 import { GROUP_EMOJI_ICONS, GROUP_ICON_LABELS } from './group-icon-labels.ts'
 import { SCIENCE_ICON_IDS, SCIENCE_ICON_SECTIONS } from './group-icons-science.tsx'
-import { EMPTY_FOLDERS_DOCUMENT, addFolder, effectiveFolders, entryFor, isUnderBase, removeFolder, rootOf, samePath, setRoot, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
+import { EMPTY_FOLDERS_DOCUMENT, addFolder, addMember, effectiveFolders, entryFor, isEmptyEntry, isUnderBase, memberOf, removeFolder, rootOf, samePath, setRoot, type FolderMember, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
 import { loadFolders, saveFolders } from './folders-persist.ts'
-import { createWorkspaceDirectory, remoteFolderWorkspace } from './folder-directory.ts'
+import { createRemoteFolder, createWorkspaceDirectory, listRemoteProfiles, remoteFolderWorkspace, type RemoteFolderWorkspace, type RemoteProfileSummary } from './folder-directory.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
+import { FoldersDialog } from './FoldersDialog.tsx'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
 import css from './styles.css?inline'
@@ -106,7 +105,7 @@ function categoryRowCount(category: CategoryNode): number {
   return category.workspaces.reduce((total, workspace) => total + 1 + (workspace.expanded ? workspace.sessions.length : 0), 0)
 }
 
-/** Palette id — i18n key for the colour picker (keeps literal key types intact). */
+/** Palette id —i18n key for the colour picker (keeps literal key types intact). */
 const COLOR_LABEL_KEYS: Record<GroupColor, WorkspaceGroupsKey> = {
   red: 'color.red',
   orange: 'color.orange',
@@ -123,7 +122,7 @@ const COLOR_LABEL_KEYS: Record<GroupColor, WorkspaceGroupsKey> = {
 /** Research icon ids, matched against the shared registry for the picker split. */
 const SCIENCE_ICON_ID_SET: ReadonlySet<string> = new Set(SCIENCE_ICON_IDS)
 
-/** Picker section key → i18n key (keeps literal key types intact). */
+/** Picker section key —i18n key (keeps literal key types intact). */
 const SCIENCE_SECTION_LABEL_KEYS: Record<'lab' | 'materials' | 'characterization' | 'devices', WorkspaceGroupsKey> = {
   lab: 'group.icon.section.lab',
   materials: 'group.icon.section.materials',
@@ -346,7 +345,7 @@ export function GroupsBrowser({
   // Local mirror root of the remote-ssh plugin, as reported by the host. A
   // project whose directory lives below it is a REMOTE workspace: its folder is
   // a mirror of one remote root, so extra folders must be subdirectories of that
-  // mirror — anything else would exist on this machine only.
+  // mirror —anything else would exist on this machine only.
   const [foldersRemoteBase, setFoldersRemoteBase] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -369,9 +368,20 @@ export function GroupsBrowser({
   // 0.1.6: the selected Session is the one retained through `mainView`, not a
   // `list.current` field (the list snapshot carries catalog facts only).
   const current = currentSessionId(list)
-  const currentWorkspaceKey = current === undefined
-    ? undefined
-    : (workspaces.find(w => w.sessionIds.includes(current as SessionId))?.workspaceId as string | undefined)
+  // A member folder is backed by its own DSH workspace, whose sidebar row this
+  // plugin hides: its sessions belong to the project that SHOWS the folder, so
+  // "current" must resolve back to that owner for expansion and highlighting.
+  const members = useMemo(() => memberWorkspaces(workspaces, foldersDoc), [workspaces, foldersDoc])
+  const visibleWorkspaces = useMemo(
+    () => workspaces.filter(w => !members.absorbed.has(w.workspaceId as string)),
+    [workspaces, members],
+  )
+  const currentWorkspaceKey = useMemo(() => {
+    if (current === undefined) return undefined
+    const owner = workspaces.find(w => w.sessionIds.includes(current as SessionId))?.workspaceId as string | undefined
+    if (owner === undefined) return undefined
+    return members.absorbed.get(owner) ?? owner
+  }, [current, workspaces, members])
 
   // Auto-expand the category + workspace containing the current session, but
   // ONLY when the user has never touched that key (`Object.hasOwn`): a
@@ -399,7 +409,7 @@ export function GroupsBrowser({
   }, [actions, config, manual, workspacePhase, workspaces])
 
   // Session tabs: the strip lives in the conversation column, but its lifecycle
-  // belongs here — the browser already derives the open session for its own tree,
+  // belongs here —the browser already derives the open session for its own tree,
   // so one effect covers every way a session can be opened (sidebar row,
   // workspace New Session, quick panel, conversation-header crumbs).
   //
@@ -506,8 +516,8 @@ export function GroupsBrowser({
   const searchMatches = useMemo<SearchMatchSet | undefined>(
     () => (normalizedQuery === ''
       ? undefined
-      : deriveSearchMatches(list, workspaces, config, normalizedQuery, archivedSessionIds, activeRemoteSearch, searchResultLimit)),
-    [list, workspaces, config, normalizedQuery, archivedSessionIds, activeRemoteSearch, searchResultLimit],
+      : deriveSearchMatches(list, workspaces, config, normalizedQuery, archivedSessionIds, activeRemoteSearch, searchResultLimit, foldersDoc)),
+    [list, workspaces, config, normalizedQuery, archivedSessionIds, activeRemoteSearch, searchResultLimit, foldersDoc],
   )
   const searchTree = useMemo<SearchTree | undefined>(
     () => (searchMatches === undefined
@@ -545,7 +555,7 @@ export function GroupsBrowser({
     return map
   }, [groups])
   // While dragging a project, an empty top-level area must still show a landing
-  // line — otherwise a project can never be dragged OUT of a group when every
+  // line —otherwise a project can never be dragged OUT of a group when every
   // project is currently grouped.
   const topLevelDropActive = dragging === 'workspace' && topLevel.length === 0
   // The top-level area is the move-out landing spot: rows reorder with an
@@ -707,7 +717,7 @@ export function GroupsBrowser({
   // "Open in folder": the host half of the official open-in-app plugin resolves
   // which applications it can launch; the project row then just posts the
   // project directory to that host's launch route. One availability read per
-  // mount — a host without the capability (or a refused read) leaves
+  // mount —a host without the capability (or a refused read) leaves
   // `folderApp` undefined, which drops the menu entry rather than failing.
   const [folderApp, setFolderApp] = useState<string | undefined>(undefined)
   const [folderError, setFolderError] = useState<{ id: number; text: string } | null>(null)
@@ -745,11 +755,11 @@ export function GroupsBrowser({
     })
   }
 
-  /** Write one workspace's entry; zero extra folders removes the key entirely. */
+  /** Write one workspace's entry; an entry with nothing attached removes the key. */
   const writeFolderEntry = (workspaceId: WorkspaceId, entry: WorkspaceFolderEntry): void => {
     const next: Record<string, WorkspaceFolderEntry> = { ...foldersDoc.workspaces }
     const key = workspaceId as string
-    if (entry.folders.length === 0) delete next[key]
+    if (isEmptyEntry(entry)) delete next[key]
     else next[key] = entry
     persistFolders({ version: 1, workspaces: next })
   }
@@ -763,36 +773,160 @@ export function GroupsBrowser({
     foldersRemoteBase !== null && isUnderBase(workspace.path, foldersRemoteBase)
   )
 
+  // The dialog browses the cloud folder's own remote root so a picked subdirectory
+  // becomes a folder of THIS project instead of a second mirror of the same tree.
+  const [foldersOwnerRemote, setFoldersOwnerRemote] = useState<string | null>(null)
+  const foldersOwnerRequest = useRef('')
+
+  /** Open the folder dialog and learn the owner's remote root (cloud owners only). */
+  const openFoldersFor = (workspaceId: string): void => {
+    foldersOwnerRequest.current = workspaceId
+    setFoldersTarget(workspaceId as WorkspaceId)
+    setFoldersOwnerRemote(null)
+    const workspace = workspaces.find(row => (row.workspaceId as string) === workspaceId)
+    if (workspace === undefined || !isRemoteWorkspace(workspace) || foldersRemoteBase === null) return
+    void remoteFolderWorkspace(workspace.path, foldersRemoteBase).then(
+      (record) => {
+        if (foldersOwnerRequest.current !== workspaceId) return
+        setFoldersOwnerRemote(record === null ? null : record.remotePath)
+      },
+      () => { if (foldersOwnerRequest.current === workspaceId) setFoldersOwnerRemote(null) },
+    )
+  }
+
+  /** The overlay record for a picked path that the SSH plugin already mirrors. */
+  const remoteMember = (target: RemoteFolderWorkspace): FolderMember => ({
+    path: target.mirrorPath,
+    workspaceId: target.workspaceId,
+    kind: 'remote',
+    remotePath: target.remotePath,
+    profileId: target.profileId,
+    ...(target.recordId === '' ? {} : { recordId: target.recordId }),
+  })
+
+  // SSH connections for the dialog's cloud section: read when the dialog opens,
+  // `null` when the remote-ssh plugin is absent (no cloud folders then), and an
+  // empty list when it is present but has no connection configured yet.
+  const [remoteProfiles, setRemoteProfiles] = useState<readonly RemoteProfileSummary[] | null>(null)
+  const [remoteProfilesError, setRemoteProfilesError] = useState<string | null>(null)
+  useEffect(() => {
+    if (foldersTarget === null) return
+    let cancelled = false
+    setRemoteProfilesError(null)
+    void listRemoteProfiles().then((profiles) => {
+      if (!cancelled) setRemoteProfiles(profiles)
+    }).catch((reason: unknown) => {
+      if (cancelled) return
+      setRemoteProfiles(null)
+      setRemoteProfilesError(reason instanceof Error ? reason.message : String(reason))
+    })
+    return () => { cancelled = true }
+  }, [foldersTarget])
+
+  /**
+   * Resolve the member workspace that owns one folder living OUTSIDE this
+   * project's own tree. DSH roots every session's file tools at its workspace,
+   * so an outside folder is only readable by the agent once it is a workspace of
+   * its own. A registered workspace already sitting on that exact path is reused
+   * instead of forked; one that owns folders of its own is refused, because
+   * nesting a folder tree inside another would hide the inner folders' sessions.
+   */
+  const memberWorkspaceFor = async (workspaceId: WorkspaceId, path: string): Promise<FolderMember> => {
+    const existing = workspaces.find(w => samePath(w.path, path) && w.workspaceId !== workspaceId)
+    if (existing !== undefined) {
+      if (!isEmptyEntry(entryFor(foldersDoc, existing.workspaceId as string))) {
+        throw new Error(t('folder.memberNested'))
+      }
+      return { path, workspaceId: existing.workspaceId as string, kind: 'local' }
+    }
+    const created = await createWorkspace({ path })
+    return { path, workspaceId: created.workspaceId as string, kind: 'local' }
+  }
+
   const addFolderTo = async (workspaceId: WorkspaceId): Promise<void> => {
     if (foldersBusy) return
     const workspace = workspaces.find(w => w.workspaceId === workspaceId)
     if (workspace === undefined) return
-    // A remote workspace's directory is a local MIRROR of one remote root; the
-    // native picker would happily return an unrelated local directory that has
-    // no remote counterpart, so that path is closed off here and the dialog
-    // takes a subpath instead.
     setFoldersBusy(true)
     try {
       if (foldersRemoteBase === null) throw new Error(t('folder.notReady'))
-      if (await remoteFolderWorkspace(workspace.path, foldersRemoteBase)) {
-        notifyFolder(t('folder.remoteNeedsSubpath'))
-        return
-      }
       const path = await pickDirectory()
       if (path === null) return // cancelled
-      if (await remoteFolderWorkspace(path, foldersRemoteBase)) {
-        notifyFolder(t('folder.remoteNeedsSubpath'))
-        return
-      }
       const entry = entryFor(foldersDoc, workspaceId as string)
       if (effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))) {
         notifyFolder(t('folder.duplicate'))
+        return
+      }
+      // The picked directory may BE a cloud folder (a registered SSH mirror): it
+      // then joins the project as a cloud member, whichever side the project
+      // itself lives on. A mirror subdirectory has no workspace of its own, so
+      // that one still needs the subpath field instead.
+      const target = await remoteFolderWorkspace(path, foldersRemoteBase)
+      if (target !== null) {
+        if (samePath(target.mirrorPath, path) && target.workspaceId !== ''
+          && target.workspaceId !== (workspaceId as string)) {
+          writeFolderEntry(workspaceId, addMember(entry, remoteMember(target)))
+          return
+        }
+        notifyFolder(t('folder.remoteNeedsSubpath'))
+        return
+      }
+      // A folder outside this project's own tree becomes a member: its own
+      // workspace is what makes it reachable for the agent, and a session started
+      // there then runs natively with no cross-workspace cwd. Folders along the
+      // tree stay plain — one cheap cwd gesture, grouped under this project.
+      if (!isUnderBase(path, workspace.path)) {
+        writeFolderEntry(workspaceId, addMember(entry, await memberWorkspaceFor(workspaceId, path)))
         return
       }
       writeFolderEntry(workspaceId, addFolder(entry, path))
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : String(reason)
       notifyFolder(`${t('folder.addError')}: ${detail}`)
+    } finally {
+      setFoldersBusy(false)
+    }
+  }
+
+  /**
+   * "New cloud folder" in the folder dialog: the SSH plugin creates the mirror,
+   * registers a real workspace for it and returns both ids, so the folder joins
+   * this project as a member and its own sidebar row stays hidden.
+   */
+  const addRemoteFolderTo = async (
+    workspaceId: WorkspaceId, profileId: string, remotePath: string,
+  ): Promise<boolean> => {
+    if (foldersBusy) return false
+    const owner = workspaces.find(w => w.workspaceId === workspaceId)
+    if (owner === undefined) return false
+    setFoldersBusy(true)
+    try {
+      const created = await createRemoteFolder(profileId, remotePath)
+      if (created.workspaceId === (workspaceId as string)) throw new Error(t('folder.duplicate'))
+      const entry = entryFor(foldersDoc, workspaceId as string)
+      if (effectiveFolders(owner.path, entry).some(folder => samePath(folder, created.path))) {
+        throw new Error(t('folder.duplicate'))
+      }
+      const member: FolderMember = {
+        path: created.path,
+        workspaceId: created.workspaceId,
+        kind: 'remote',
+        remotePath: created.remotePath,
+        profileId: created.profileId,
+        title: created.title,
+        ...(created.recordId === '' ? {} : { recordId: created.recordId }),
+      }
+      const next: FoldersDocument = {
+        version: 1,
+        workspaces: { ...foldersDoc.workspaces, [workspaceId]: addMember(entry, member) },
+      }
+      // Like the subpath field: report success only once the overlay is durable.
+      await saveFolders(next)
+      setFoldersDoc(next)
+      return true
+    } catch (reason) {
+      notifyFolder(`${t('folder.addError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+      return false
     } finally {
       setFoldersBusy(false)
     }
@@ -836,11 +970,14 @@ export function GroupsBrowser({
   }
 
   /**
-   * "New session here": an extra folder's own directory becomes the Session cwd.
-   * The base folder keeps the platform's own gesture instead, because that one
-   * reuses the blank session it already opened; creating a fresh Session on
-   * every click would pile up empty sessions. One creation in flight at a time;
-   * a rejection surfaces the failure and creates nothing else.
+   * "New session here": a member folder has its OWN workspace, so the session is
+   * created there with no cwd override at all —that is what makes a cloud
+   * folder and a local folder behave identically under one project row. A plain
+   * extra folder keeps the cwd gesture. The base folder keeps the platform's own
+   * gesture instead, because that one reuses the blank session it already opened;
+   * creating a fresh Session on every click would pile up empty sessions. One
+   * creation in flight at a time; a rejection surfaces the failure and creates
+   * nothing else.
    */
   const startSessionInFolder = (workspaceId: WorkspaceId, path: string, isBase: boolean): void => {
     if (isBase) {
@@ -852,7 +989,28 @@ export function GroupsBrowser({
     void (async () => {
       const workspace = workspaces.find(w => w.workspaceId === workspaceId)
       if (!workspace) throw new Error('Workspace not found')
+      const member = memberOf(entryFor(foldersDoc, workspaceId as string), path)
+      if (member !== undefined) {
+        // The member's own workspace is what runs the session; if the user deleted
+        // it outside this overlay, say so instead of failing inside the platform.
+        if (!workspaces.some(w => w.workspaceId === member.workspaceId)) {
+          throw new Error(t('folder.memberMissing'))
+        }
+        await createSessionIn(member.workspaceId as WorkspaceId)
+        return
+      }
       if (foldersRemoteBase === null) throw new Error(t('folder.notReady'))
+      // Legacy overlay: a folder recorded before out-of-tree folders became
+      // members has no workspace of its own, and a cwd override cannot escape
+      // this project's root — so the agent would open the folder and see nothing.
+      // Register the member now and run the session inside it.
+      if (!isUnderBase(path, workspace.path)) {
+        const entry = entryFor(foldersDoc, workspaceId as string)
+        const attached = await memberWorkspaceFor(workspaceId, path)
+        writeFolderEntry(workspaceId, addMember(entry, attached))
+        await createSessionIn(attached.workspaceId as WorkspaceId)
+        return
+      }
       const remote = await remoteFolderWorkspace(workspace.path, foldersRemoteBase)
       const targetRemote = await remoteFolderWorkspace(path, foldersRemoteBase)
       if (remote || targetRemote) throw new Error(t('folder.remoteSessionUnsupported'))
@@ -865,7 +1023,7 @@ export function GroupsBrowser({
     })
   }
 
-  /** A project row's plus button — starts in that workspace's root folder. */
+  /** A project row's plus button —starts in that workspace's root folder. */
   const startSessionAtRoot = (workspaceId?: WorkspaceId): void => {
     const workspace = workspaceId === undefined ? undefined : workspaces.find(w => w.workspaceId === workspaceId)
     if (workspace === undefined) {
@@ -1192,7 +1350,7 @@ export function GroupsBrowser({
   /**
    * Drop on a row. The insertion point is re-derived from the drop event's
    * position (top half = before, bottom half = after), so it always matches
-   * the indicator the user last saw — even when dragover and drop arrive in
+   * the indicator the user last saw —even when dragover and drop arrive in
    * the same tick.
    */
   const onDropRow = (categoryKey: string, row: DropRowRef) => (event: DragEvent): void => {
@@ -1269,8 +1427,7 @@ export function GroupsBrowser({
 
   /**
    * Drag over the TOP-LEVEL AREA's blank space (not on a row ???rows stop
-   * propagation). An insertion line shows the landing spot: empty top level —
-   * a standalone line under the last group; non-empty — a line below the last
+   * propagation). An insertion line shows the landing spot: empty top level —   * a standalone line under the last group; non-empty —a line below the last
    * top-level row (end of the list).
    */
   const onDragOverTopLevelArea = (event: DragEvent): void => {
@@ -1293,7 +1450,7 @@ export function GroupsBrowser({
     }
   }
 
-  // While dragging a project, only PROJECT rows fold — every expanded
+  // While dragging a project, only PROJECT rows fold —every expanded
   // workspace collapses (inside groups AND top-level); group rows keep their
   // expansion so the user still sees where groups are. dragend restores the
   // snapshot taken here.
@@ -1349,7 +1506,7 @@ export function GroupsBrowser({
 
   // Bottom-bar content. Idle: the default workspace with its real subtree.
   // Searching: the pruned branch (matched sessions only), or the bare row when
-  // nothing matched — the results area never repeats this workspace.
+  // nothing matched —the results area never repeats this workspace.
   const defaultBarNode = defaultWorkspace === undefined
     ? undefined
     : normalizedQuery === ''
@@ -1362,8 +1519,7 @@ export function GroupsBrowser({
 
   /**
    * One category section with every tree callback bound. Extracted so the docked
-   * bucket is literally the same row/children component as a tree category —
-   * drag, menu, rename, appearance, folder management all behave identically.
+   * bucket is literally the same row/children component as a tree category —   * drag, menu, rename, appearance, folder management all behave identically.
    */
   const categorySectionNode = (category: CategoryNode): JSX.Element => (
     <CategorySection
@@ -1387,7 +1543,7 @@ export function GroupsBrowser({
       onFolderSetRoot={setFolderRoot}
       onFolderRemove={removeFolderFrom}
       onOpenFolderPath={openFolderPath}
-      onManageFolders={(workspaceId) => { setFoldersTarget(workspaceId) }}
+      onManageFolders={openFoldersFor}
       creatingFolderKey={creatingSessionIn}
       onRenameRequest={(workspaceId, title) => {
         setRenameTarget({ workspaceId, currentTitle: title })
@@ -1423,8 +1579,7 @@ export function GroupsBrowser({
       onOpenInFolder={openInFolder}
       canMoveOut={(workspaceId) => {
         // The menu "Move out of group" is offered for any project that
-        // currently sits inside a group (rule-classified or manual) —
-        // not just overridden ones. Top-level projects
+        // currently sits inside a group (rule-classified or manual) —        // not just overridden ones. Top-level projects
         // (resolveCategory === undefined) don't need it.
         const workspace = workspaces.find(w => w.workspaceId === workspaceId)
         return workspace !== undefined
@@ -1592,7 +1747,7 @@ export function GroupsBrowser({
                 onFolderSetRoot={setFolderRoot}
                 onFolderRemove={removeFolderFrom}
                 onOpenFolderPath={openFolderPath}
-                onManageFolders={(workspaceId) => { setFoldersTarget(workspaceId) }}
+                onManageFolders={openFoldersFor}
                 creatingFolderKey={creatingSessionIn}
                 onRenameRequest={(workspaceId, title) => {
                   setRenameTarget({ workspaceId, currentTitle: title })
@@ -1620,7 +1775,7 @@ export function GroupsBrowser({
             children (same component, same drag/menu behaviour), capped in height
             with its own scroll so a big bucket cannot swallow the tree;
           - the Host default workspace keeps the whole workspace-row behaviour
-            (toggle, new session, rename, delete, ⋯ menu, folder management) and
+            (toggle, new session, rename, delete, —menu, folder management) and
             its sessions still highlight as usual. */}
       {wide && (dockCategory !== undefined || defaultBarNode !== undefined) && (
         <div className="wgDock">
@@ -1649,7 +1804,7 @@ export function GroupsBrowser({
                 {...(openInFolder !== undefined
                   ? { onOpenInFolder: () => { openInFolder(defaultBarNode.workspaceId) } }
                   : {})}
-                onManageFolders={() => { setFoldersTarget(defaultBarNode.workspaceId) }}
+                onManageFolders={() => { openFoldersFor(defaultBarNode.workspaceId as string) }}
               />
               <div className="wgDockSessions">
                 <WorkspaceSubtree
@@ -1827,7 +1982,7 @@ export function GroupsBrowser({
                   onKeyDown={(e) => { if (e.key === 'Enter') commitAppearanceIcon() }}
                   onBlur={(event) => {
                     /* A swatch / preset click moves focus out of the field in the
-                       same gesture and writes its own patch — committing the stale
+                       same gesture and writes its own patch —committing the stale
                        draft here would race it and could overwrite the preset. */
                     const next = event.relatedTarget
                     if (next instanceof Element && next.closest('.wgSwatch, .wgIconCell') !== null) return
@@ -1863,12 +2018,17 @@ export function GroupsBrowser({
             busy={foldersBusy}
             canOpen={openFolderPath !== undefined}
             remote={isRemoteWorkspace(workspace)}
-            onClose={() => { setFoldersTarget(null) }}
-            onAdd={() => { void addFolderTo(foldersTarget) }}
+            ownerRemotePath={foldersOwnerRemote}
+            profiles={remoteProfiles}
+            profilesError={remoteProfilesError}
+            knownWorkspaceIds={workspaces.map(w => w.workspaceId as string)}
+            onAddFolder={() => { void addFolderTo(foldersTarget) }}
+            onAddRemote={(profileId, remotePath) => addRemoteFolderTo(foldersTarget, profileId, remotePath)}
             onAddSubpath={(relative) => addSubpathTo(foldersTarget, relative)}
             onSetRoot={(path) => { setFolderRoot(foldersTarget, path) }}
             onRemove={(path) => { removeFolderFrom(foldersTarget, path) }}
             onOpenFolder={(path) => { openFolderPath?.(path) }}
+            onClose={() => { foldersOwnerRequest.current = ''; setFoldersTarget(null) }}
           />
         )
       })()}
@@ -1981,7 +2141,7 @@ export function GroupsBrowser({
         <QuickPanel
           onClose={() => { setQuickOpen(false) }}
           list={list}
-          workspaces={workspaces}
+          workspaces={visibleWorkspaces}
           archivedSessionIds={archivedSessionIds}
           categoryByWorkspace={categoryByWorkspace}
           current={current}
@@ -2407,7 +2567,7 @@ function SearchSubtree({ workspace, current, now, open, t }: {
 /**
  * Search results, presentational only: the owner derives the tree and the
  * match set (so the pinned default-workspace bar can share that derivation).
- * This view never repeats the default workspace — tree.ts leaves it out of the
+ * This view never repeats the default workspace —tree.ts leaves it out of the
  * categories / top-level projections and hands it back as `tree.defaultWorkspace`.
  */
 function SearchBody({ tree, matches, status, current, now, open, t }: {
@@ -2468,117 +2628,5 @@ function SearchBody({ tree, matches, status, current, now, open, t }: {
         <div className="wgSearchStatus">{t('search.hasMore')}</div>
       )}
     </div>
-  )
-}
-
-/**
- * Folder list dialog for one workspace: the base folder first, then every extra
- * folder in stored order. The radio column chooses the root (the folder new
- * sessions default to); open/remove act per row, and removing the base folder is
- * never offered because the workspace's canonical directory cannot be dropped.
- */
-function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, onClose, onAdd, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
-  workspace: WorkspaceView
-  entry: WorkspaceFolderEntry | undefined
-  t: GroupsBrowserProps['t']
-  busy: boolean
-  canOpen: boolean
-  /** Remote (mirror-backed) workspace: extra folders are typed subpaths, not picked. */
-  remote: boolean
-  onClose: () => void
-  onAdd: () => void
-  onAddSubpath: (relative: string) => Promise<boolean>
-  onSetRoot: (path: string) => void
-  onRemove: (path: string) => void
-  onOpenFolder: (path: string) => void
-}) {
-  const folders = effectiveFolders(workspace.path, entry)
-  const root = rootOf(workspace.path, entry)
-  const [subpath, setSubpath] = useState('')
-  const submitSubpath = (): void => {
-    if (subpath.trim() === '') return
-    if (busy) return
-    void onAddSubpath(subpath).then(success => { if (success) setSubpath('') })
-  }
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      closeLabel={t('close')}
-      title={t('folder.title')}
-      footer={(
-        <Button variant="primary" onClick={onClose}>{t('folder.done')}</Button>
-      )}
-    >
-      <div className="wgFolderList" role="list" aria-label={t('folder.listAria')}>
-        {folders.map((path, index) => {
-          const isBase = index === 0
-          const isRoot = samePath(path, root)
-          const label = folderLabel(path)
-          return (
-            <div key={path} className="wgFolderListRow" role="listitem">
-              <input
-                type="radio"
-                className="wgFolderRadio"
-                name="wg-folder-root"
-                checked={isRoot}
-                aria-label={`${t('folder.rootBadge')} ${label}`}
-                onChange={() => { onSetRoot(path) }}
-              />
-              <span className="wgFolderListLabel" title={path}>{label}</span>
-              {isBase && <span className="wgFolderListTag">{t('folder.base')}</span>}
-              {isRoot && <span className="wgFolderListTag">{t('folder.rootBadge')}</span>}
-              <span className="wgFolderListActions">
-                {canOpen && (
-                  <button
-                    type="button"
-                    className="wgIconButton"
-                    aria-label={`${t('workspace.openInFolder')} ${label}`}
-                    onClick={() => { onOpenFolder(path) }}
-                  >
-                    <IconFolderOpenOutlineRegular size={16} />
-                  </button>
-                )}
-                {!isBase && (
-                  <button
-                    type="button"
-                    className="wgIconButton"
-                    aria-label={`${t('folder.remove')} ${label}`}
-                    onClick={() => { onRemove(path) }}
-                  >
-                    <IconTrashOutlineRegular />
-                  </button>
-                )}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-      <div className="wgFolderListFooter">
-        <>
-              <p className="wgFolderHint">{t('folder.remoteHint')}</p>
-              <div className="wgFolderSubpath">
-                <input
-                  type="text"
-                  className="wgFolderSubpathInput"
-                  value={subpath}
-                  placeholder={t('folder.subpathPlaceholder')}
-                  aria-label={t('folder.subpathLabel')}
-                  disabled={busy}
-                  onChange={event => setSubpath(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter') return
-                    event.preventDefault()
-                    submitSubpath()
-                  }}
-                />
-                <Button variant="outline" disabled={busy || subpath.trim() === ''} onClick={submitSubpath}>
-                  {t('folder.addSubpath')}
-                </Button>
-              </div>
-        </>
-        {!remote && <Button variant="outline" disabled={busy} onClick={onAdd}>{t('folder.add')}</Button>}
-      </div>
-    </Modal>
   )
 }

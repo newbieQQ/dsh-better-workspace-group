@@ -111,12 +111,30 @@ export declare const UNCATEGORIZED_KEY = "\u672A\u5206\u7C7B";
 export declare function isDockedCategoryKey(key: string): boolean;
 /** Directory display label: basename of the path (both separators accepted). */
 export declare function workspaceLabel(cwd: string | undefined): string;
+/** A workspace-backed ("member") folder resolved against the workspace list. */
+export interface MemberWorkspaces {
+    /** Member workspace id → owning workspace id (the rows to hide). */
+    absorbed: ReadonlyMap<string, string>;
+    /** Owning workspace id → member workspaces in stored folder order. */
+    byOwner: ReadonlyMap<string, readonly WorkspaceView[]>;
+}
+/**
+ * Resolve the workspace-backed folders of every project.
+ *
+ * A member folder is a real DSH workspace whose OWN row must disappear: its
+ * sessions are rendered under its owner's folder row instead, so one project can
+ * carry local and cloud (SSH-mirrored) folders at once. Members the Host no
+ * longer knows are dropped from the index — the folder row survives (its path is
+ * still stored) but shows no sessions.
+ * @param workspaces - real workspaces in Host order.
+ * @param folders - per-workspace extra folders + members + root.
+ */
+export declare function memberWorkspaces(workspaces: readonly WorkspaceView[], folders?: FoldersDocument): MemberWorkspaces;
 /**
  * Display label of one folder: the last path segment. A drive root (`C:\`) or
  * the POSIX root has no segment, so the whole path is the honest label.
  * @param path - absolute folder path.
- */
-export declare function folderLabel(path: string): string;
+ */ export declare function folderLabel(path: string): string;
 /** Stable identity of one folder row (same path may live under two workspaces). */
 export declare function folderKey(workspaceId: WorkspaceId, path: string): string;
 /**
@@ -180,7 +198,7 @@ export interface SearchMatchSet {
 export declare function deriveSearchMatches(list: SessionListState, workspaces: readonly WorkspaceView[], config: GroupsConfig, query: string, archivedSessionIds: readonly SessionId[], content: {
     items: readonly SessionSearchResultItem[];
     hasMore: boolean;
-}, limit: number): SearchMatchSet;
+}, limit: number, folders?: FoldersDocument): SearchMatchSet;
 /** Search tree: group folders plus top-level (ungrouped) matched workspaces. */
 export interface SearchTree {
     /** Group folders containing matched sessions, in display order. */

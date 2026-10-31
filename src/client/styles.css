@@ -730,45 +730,193 @@
   border-color:var(--dsw-accent,#4a90d9);
 }
 
-/* Folder list dialog: one row per folder (base first), radio picks the root. */
+/* Folder dialog: project header, one card per folder, then the add section.
+   Rows are two-line (name over path) so a generated mirror id never has to be
+   read as a name, and the add action owns a full-width row so its label cannot
+   wrap. */
+.wgFolderBody {
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+
+.wgFolderHead {
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:0;
+}
+
+.wgFolderHeadName {
+  color:var(--dsw-fg-1,inherit);
+  font-size:13px;
+  font-weight:600;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.wgFolderHeadPath {
+  color:var(--dsw-alias-label-secondary,inherit);
+  font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,monospace);
+  font-size:11px;
+  opacity:.65;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.wgFolderSection {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-width:0;
+}
+
+.wgFolderSectionTitle {
+  color:var(--dsw-alias-label-secondary,inherit);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.03em;
+  opacity:.7;
+}
+
 .wgFolderList {
   display:flex;
   flex-direction:column;
   gap:4px;
+  max-height:280px;
+  overflow:auto;
+  padding:2px;
+  margin:0 -2px;
 }
 
 .wgFolderListRow {
-  border-radius:6px;
-  align-items:center;
-  gap:6px;
-  padding:4px 4px 4px 2px;
   display:flex;
+  align-items:center;
+  gap:8px;
+  padding:7px 8px;
+  border:1px solid transparent;
+  border-radius:8px;
+  background:#7f7f7f1a;
+  transition:background .12s ease,border-color .12s ease;
 }
 
 .wgFolderListRow:hover {
+  background:var(--dsw-bg-hover,#7f7f7f2e);
+}
+
+.wgFolderListRow[data-active="true"] {
+  border-color:var(--dsw-alias-border-l2,#7f7f7f40);
   background:var(--dsw-bg-hover,#7f7f7f1f);
 }
 
-.wgFolderRadio {
+.wgFolderRootPick {
+  display:inline-flex;
+  align-items:center;
   flex:none;
-  accent-color:var(--dsw-accent,#4a90d9);
+  cursor:pointer;
+}
+
+.wgFolderRadio {
+  appearance:none;
+  width:14px;
+  height:14px;
   margin:0;
+  border:1.5px solid var(--dsw-alias-border-l2,#7f7f7f80);
+  border-radius:50%;
+  background:none;
+  display:grid;
+  place-content:center;
+  cursor:pointer;
+  transition:border-color .12s ease;
+}
+
+.wgFolderRadio:hover {
+  border-color:var(--dsw-accent,#4a90d9);
+}
+
+.wgFolderRadio:checked {
+  border-color:var(--dsw-accent,#4a90d9);
+}
+
+.wgFolderRadio:checked::after {
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:var(--dsw-accent,#4a90d9);
+}
+
+.wgFolderRadio:focus-visible {
+  outline:2px solid var(--dsw-accent,#4a90d9);
+  outline-offset:2px;
+}
+
+.wgFolderEntry {
+  display:flex;
+  flex-direction:column;
+  gap:1px;
+  flex:1 1 auto;
+  min-width:0;
 }
 
 .wgFolderListLabel {
+  color:var(--dsw-fg-1,inherit);
+  font-size:12.5px;
+  font-weight:500;
+  line-height:1.35;
+  overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
-  min-width:0;
-  color:var(--dsw-fg-1,inherit);
-  font-size:12px;
-  flex:1;
+}
+
+.wgFolderListPath {
+  color:var(--dsw-alias-label-secondary,inherit);
+  font-family:var(--dsw-font-mono,ui-monospace,SFMono-Regular,monospace);
+  font-size:11px;
+  line-height:1.35;
+  opacity:.6;
   overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.wgFolderListTags {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  flex:none;
 }
 
 .wgFolderListTag {
-  color:var(--dsw-fg-3,#7f7f7fcc);
-  flex:none;
-  font-size:11px;
+  padding:2px 6px;
+  border:1px solid var(--dsw-alias-border-l2,#7f7f7f40);
+  border-radius:999px;
+  color:var(--dsw-alias-label-secondary,inherit);
+  font-size:10px;
+  line-height:1.4;
+  white-space:nowrap;
+}
+
+.wgFolderListTag[data-tone="base"] {
+  border-style:dashed;
+}
+
+.wgFolderListTag[data-tone="root"] {
+  border-color:transparent;
+  background:#4a90d92e;
+  color:var(--dsw-fg-1,inherit);
+}
+
+.wgFolderListTag[data-tone="cloud"],
+.wgFolderListTag[data-tone="local"] {
+  opacity:.85;
+}
+
+.wgFolderListTag[data-tone="danger"] {
+  border-color:#d464644d;
+  color:#e08a8a;
 }
 
 .wgFolderListActions {
@@ -776,26 +924,264 @@
   align-items:center;
   gap:2px;
   display:inline-flex;
+  opacity:.5;
+  transition:opacity .12s ease;
 }
 
-.wgFolderListFooter {
-  margin-top:8px;
+.wgFolderListRow:hover .wgFolderListActions,
+.wgFolderListRow:focus-within .wgFolderListActions {
+  opacity:1;
 }
 
-/* Remote (mirror-backed) workspaces add a folder by typed subpath, so the
-   footer grows a hint + input row instead of the picker button. */
-.wgFolderHint {
+.wgFolderEmpty {
+  margin:0;
+  padding:10px 12px;
+  border:1px dashed var(--dsw-alias-border-l2,#7f7f7f40);
+  border-radius:8px;
   color:var(--dsw-alias-label-secondary,inherit);
-  margin:0 0 6px;
-  font-size:12px;
+  font-size:11.5px;
   line-height:1.5;
-  opacity:.85;
+  opacity:.75;
 }
 
-.wgFolderSubpath {
+/* Add area: a segmented switch chooses local directory or cloud directory; the
+   chosen action then owns its own row so nothing competes for its width. */
+.wgFolderAdd {
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  padding-top:12px;
+  border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f33);
+}
+
+.wgFolderSegmented {
+  display:inline-flex;
+  align-self:flex-start;
+  gap:2px;
+  padding:2px;
+  border-radius:999px;
+  background:#7f7f7f29;
+}
+
+.wgFolderTab {
+  padding:4px 12px;
+  border:0;
+  border-radius:999px;
+  background:none;
+  color:var(--dsw-alias-label-secondary,inherit);
+  font:inherit;
+  font-size:12px;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:background .12s ease,color .12s ease;
+}
+
+.wgFolderTab:hover {
+  color:var(--dsw-fg-1,inherit);
+}
+
+/* The selected pill must read as a raised chip inside the tinted track, so it
+   never looks like the outlined buttons further down the dialog. */
+.wgFolderTab[aria-selected="true"] {
+  background:#ffffff2b;
+  box-shadow:inset 0 0 0 1px #ffffff1f;
+  color:var(--dsw-fg-1,inherit);
+  font-weight:600;
+}
+
+.wgFolderLocalPane {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.wgFolderPick {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  padding:9px 12px;
+  border:1px dashed var(--dsw-alias-border-l2,#7f7f7f59);
+  border-radius:8px;
+  background:none;
+  color:var(--dsw-fg-1,inherit);
+  font:inherit;
+  font-size:12.5px;
+  font-weight:500;
+  text-align:left;
+  cursor:pointer;
+  white-space:nowrap;
+  transition:border-color .12s ease,background .12s ease;
+}
+
+.wgFolderPick:hover:not(:disabled) {
+  border-color:var(--dsw-accent,#4a90d9);
+  background:#4a90d91a;
+}
+
+.wgFolderPick:disabled {
+  opacity:.5;
+  cursor:default;
+}
+
+.wgFolderPickPlus {
+  flex:none;
+  color:var(--dsw-accent,#4a90d9);
+  font-size:13px;
+  line-height:1;
+}
+
+.wgFolderHint {
+  margin:0;
+  color:var(--dsw-alias-label-secondary,inherit);
+  font-size:11px;
+  line-height:1.55;
+  opacity:.7;
+}
+
+.wgFolderActions {
+  display:flex;
+  gap:6px;
+}
+
+/* The add actions own their line: a primary button sharing a row with a field
+   left it too narrow to render its label on one line. */
+.wgFolderActions > button {
+  width:100%;
+  justify-content:center;
+}
+
+.wgFolderStack {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.wgFolderField {
+  position:relative;
+  display:flex;
+  align-items:center;
+}
+
+.wgFolderField .wgFolderFieldInput {
+  width:100%;
+  padding-right:30px;
+}
+
+/* Browse lives inside the path field: the dialog is too narrow to spend a whole
+   button on it. */
+.wgFolderFieldAction {
+  position:absolute;
+  right:4px;
+  top:50%;
+  transform:translateY(-50%);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:22px;
+  height:22px;
+  padding:0;
+  border:0;
+  border-radius:5px;
+  background:none;
+  color:var(--dsw-fg-3,#a6abc4);
+  cursor:pointer;
+}
+
+.wgFolderFieldAction:hover:not(:disabled) {
+  background:var(--dsw-bg-hover,#ffffff1f);
+  color:var(--dsw-fg-1,inherit);
+}
+
+.wgFolderFieldAction:disabled {
+  opacity:.4;
+  cursor:default;
+}
+
+.wgFolderAddRow {
   display:flex;
   align-items:center;
   gap:6px;
+  margin-top:6px;
+}
+
+.wgFolderAddRow > button {
+  flex:none;
+  white-space:nowrap;
+}
+
+.wgFolderNote {
+  margin:0;
+  color:var(--dsw-alias-label-secondary,inherit);
+  font-size:11px;
+  line-height:1.5;
+  opacity:.8;
+}
+
+/* Remote directory picker: location bar on top, directory list under it. */
+.wgRemoteBar {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  margin-bottom:8px;
+}
+
+.wgRemotePath {
+  flex:1 1 auto;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-family:var(--dsw-font-mono,ui-monospace,monospace);
+  font-size:12px;
+  color:var(--dsw-fg-1,inherit);
+}
+
+.wgRemoteActions {
+  flex:none;
+  display:inline-flex;
+  gap:4px;
+}
+
+.wgRemoteList {
+  max-height:260px;
+  overflow:auto;
+  border:1px solid var(--dsw-alias-border-l2,#7f7f7f33);
+  border-radius:8px;
+  padding:4px;
+  margin:0 0 8px;
+}
+
+.wgRemoteRow {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  width:100%;
+  padding:5px 6px;
+  border:0;
+  border-radius:6px;
+  background:none;
+  color:var(--dsw-fg-1,inherit);
+  font:inherit;
+  font-size:12px;
+  text-align:left;
+  cursor:pointer;
+}
+
+.wgRemoteRow:hover {
+  background:var(--dsw-bg-hover,#7f7f7f1f);
+}
+
+.wgRemoteName {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.wgFolderSelect {
+  flex:1 1 auto;
+  width:100%;
+  min-width:0;
 }
 
 .wgFolderSubpathInput {

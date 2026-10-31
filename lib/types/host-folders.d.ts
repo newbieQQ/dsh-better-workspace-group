@@ -3,8 +3,10 @@ import { type FoldersDocument } from './core/folders.ts';
 export declare const FOLDERS_FILE_NAME = "workspace-groups.folders.json";
 /** Hard limits enforced at the write boundary. */
 export declare const FOLDERS_PER_WORKSPACE_LIMIT = 32;
+export declare const MEMBERS_PER_WORKSPACE_LIMIT = 16;
 export declare const WORKSPACE_ID_LIMIT = 200;
 export declare const FOLDER_PATH_LIMIT = 1024;
+export declare const REMOTE_PATH_LIMIT = 1024;
 /** Default overlay location: `$DSH_HOME/workspace-groups.folders.json`. */
 export declare function defaultFoldersPath(): string;
 /**

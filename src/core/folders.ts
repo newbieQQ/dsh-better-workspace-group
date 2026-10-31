@@ -17,9 +17,47 @@
  * and no cordis so plain Node (the verifier, the host route) can load it.
  */
 
+/** Kind of a member folder: a plain local directory, or an SSH-mirrored one. */
+export type FolderMemberKind = 'local' | 'remote'
+
+/**
+ * A folder row that is backed by its OWN DSH workspace ("member").
+ *
+ * Plain extra folders ( {@link WorkspaceFolderEntry.folders} ) live inside the
+ * owner's canonical directory tree and their sessions run with the OWNER's
+ * workspace id. A member has a directory the owner cannot reach that way — a
+ * remote (mirror-backed) folder, or a local directory added to a remote project
+ * — so the platform registers a real workspace for it and the row delegates
+ * session creation to that workspace id. The member's own workspace row is
+ * hidden from the sidebar while some entry lists it (see
+ * {@link absorbedWorkspaceIds}), so the project reads as one project with both
+ * kinds of folders.
+ */
+export interface FolderMember {
+  /** Absolute LOCAL path of the member workspace (its canonical directory). */
+  readonly path: string
+  /** Native DSH workspace id backing this folder row. */
+  readonly workspaceId: string
+  readonly kind: FolderMemberKind
+  /** Remote root, when `kind` is 'remote' (`~`, `~/proj`, `/srv/proj`). */
+  readonly remotePath?: string
+  /** SSH connection profile id, when `kind` is 'remote'. */
+  readonly profileId?: string
+  /** remote-ssh's own record id, when `kind` is 'remote'. */
+  readonly recordId?: string
+  /** Display title the platform gave the member workspace. */
+  readonly title?: string
+}
+
 /** Folders attached to one workspace: EXTRA folders only (the base is implicit). */
 export interface WorkspaceFolderEntry {
+  /**
+   * Plain local extra folders: directories the owner workspace can address
+   * directly, so their sessions keep the owner's workspace id.
+   */
   readonly folders: readonly string[]
+  /** Workspace-backed extra folders (remote mirrors, or local on a remote owner). */
+  readonly members?: readonly FolderMember[]
   readonly root?: string
 }
 
@@ -103,13 +141,66 @@ export function effectiveFolders(
   entry: WorkspaceFolderEntry | undefined,
 ): readonly string[] {
   const extras: string[] = []
-  for (const folder of entry?.folders ?? []) {
+  const candidates: string[] = [
+    ...(entry?.folders ?? []),
+    ...(entry?.members ?? []).map(member => member.path),
+  ]
+  for (const folder of candidates) {
     if (folder.trim() === '') continue
     if (samePath(folder, workspacePath)) continue
     if (extras.some(existing => samePath(existing, folder))) continue
     extras.push(folder)
   }
   return [workspacePath, ...extras]
+}
+
+/**
+ * The member record behind one folder path, when that folder is workspace-backed.
+ * @param entry - saved folder entry, if any.
+ * @param path - folder path as stored.
+ */
+export function memberOf(entry: WorkspaceFolderEntry | undefined, path: string): FolderMember | undefined {
+  return (entry?.members ?? []).find(member => samePath(member.path, path))
+}
+
+/**
+ * Every member folder of one owner workspace, in stored order.
+ * @param doc - folders document.
+ * @param ownerWorkspaceId - workspace the members hang off.
+ */
+export function membersOf(doc: FoldersDocument, ownerWorkspaceId: string): readonly FolderMember[] {
+  return entryFor(doc, ownerWorkspaceId)?.members ?? []
+}
+
+/**
+ * Member workspace id → owning workspace id.
+ *
+ * These are the workspaces whose own row disappears from the sidebar: their
+ * sessions render under the owning project's folder row instead. A workspace
+ * that is itself an owner (it carries an entry) is never absorbed — absorbing
+ * it would hide a project together with the folders nested below it.
+ * @param doc - folders document.
+ */
+export function absorbedWorkspaceIds(doc: FoldersDocument): ReadonlyMap<string, string> {
+  const owners = new Set(Object.keys(doc.workspaces))
+  const absorbed = new Map<string, string>()
+  for (const [ownerId, entry] of Object.entries(doc.workspaces)) {
+    for (const member of entry.members ?? []) {
+      if (member.workspaceId === '' || member.workspaceId === ownerId) continue
+      if (owners.has(member.workspaceId)) continue
+      if (!absorbed.has(member.workspaceId)) absorbed.set(member.workspaceId, ownerId)
+    }
+  }
+  return absorbed
+}
+
+/**
+ * True when the entry carries neither a plain folder nor a member, i.e. it can
+ * be dropped from the sidecar instead of being written empty.
+ * @param entry - folder entry.
+ */
+export function isEmptyEntry(entry: WorkspaceFolderEntry | undefined): boolean {
+  return (entry?.folders.length ?? 0) === 0 && (entry?.members?.length ?? 0) === 0
 }
 
 /**
@@ -165,28 +256,47 @@ export function folderOfCwd(
  */
 export function addFolder(entry: WorkspaceFolderEntry | undefined, path: string): WorkspaceFolderEntry {
   const folders = entry?.folders ?? []
+  const members = entry?.members ?? []
   const root = entry?.root
   const trimmed = path.trim()
   const keepRoot = root === undefined ? {} : { root }
-  if (trimmed === '' || folders.some(folder => samePath(folder, trimmed))) {
-    return { folders: [...folders], ...keepRoot }
+  const keepMembers = members.length === 0 ? {} : { members: [...members] }
+  if (trimmed === '' || folders.some(folder => samePath(folder, trimmed))
+    || members.some(member => samePath(member.path, trimmed))) {
+    return { folders: [...folders], ...keepMembers, ...keepRoot }
   }
-  return { folders: [...folders, trimmed], ...keepRoot }
+  return { folders: [...folders, trimmed], ...keepMembers, ...keepRoot }
 }
 
 /**
- * Drop an extra folder. A root that pointed at it is cleared, so the workspace
- * falls back to its own directory instead of referencing a folder it no longer
- * has.
+ * Append a workspace-backed folder. Idempotent under `samePath`: a later call
+ * for the same path replaces the stored member (so a re-registered workspace id
+ * wins) instead of stacking a duplicate row.
+ * @param entry - current entry, or undefined for a workspace with no extras.
+ * @param member - member record to store.
+ */
+export function addMember(entry: WorkspaceFolderEntry | undefined, member: FolderMember): WorkspaceFolderEntry {
+  const folders = (entry?.folders ?? []).filter(folder => !samePath(folder, member.path))
+  const members = (entry?.members ?? []).filter(existing => !samePath(existing.path, member.path))
+  const root = entry?.root
+  const keepRoot = root === undefined || samePath(root, member.path) ? {} : { root }
+  return { folders: [...folders], members: [...members, member], ...keepRoot }
+}
+
+/**
+ * Drop an extra folder, plain or workspace-backed. A root that pointed at it is
+ * cleared, so the workspace falls back to its own directory instead of
+ * referencing a folder it no longer has.
  * @param entry - current entry, or undefined.
  * @param path - folder path to drop.
  */
 export function removeFolder(entry: WorkspaceFolderEntry | undefined, path: string): WorkspaceFolderEntry {
-  const folders = entry?.folders ?? []
-  const remaining = folders.filter(folder => !samePath(folder, path))
+  const folders = (entry?.folders ?? []).filter(folder => !samePath(folder, path))
+  const members = (entry?.members ?? []).filter(member => !samePath(member.path, path))
   const root = entry?.root
   const keepRoot = root !== undefined && !samePath(root, path)
-  return { folders: remaining, ...(keepRoot ? { root } : {}) }
+  const keepMembers = members.length === 0 ? {} : { members }
+  return { folders: folders, ...keepMembers, ...(keepRoot ? { root } : {}) }
 }
 
 /**
@@ -198,9 +308,12 @@ export function removeFolder(entry: WorkspaceFolderEntry | undefined, path: stri
  */
 export function setRoot(entry: WorkspaceFolderEntry | undefined, path: string): WorkspaceFolderEntry {
   const folders = entry?.folders ?? []
-  const match = folders.find(folder => samePath(folder, path))
-  if (match === undefined) return { folders: [...folders] }
-  return { folders: [...folders], root: match }
+  const members = entry?.members ?? []
+  const keepMembers = members.length === 0 ? {} : { members: [...members] }
+  const match = [...folders, ...members.map(member => member.path)]
+    .find(folder => samePath(folder, path))
+  if (match === undefined) return { folders: [...folders], ...keepMembers }
+  return { folders: [...folders], ...keepMembers, root: match }
 }
 
 /**

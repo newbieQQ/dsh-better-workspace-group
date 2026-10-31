@@ -18,6 +18,7 @@ import { homedir } from 'node:os'
 import {
   EMPTY_FOLDERS_DOCUMENT,
   samePath,
+  type FolderMember,
   type FoldersDocument,
   type WorkspaceFolderEntry,
 } from './core/folders.ts'
@@ -27,8 +28,10 @@ export const FOLDERS_FILE_NAME = 'workspace-groups.folders.json'
 
 /** Hard limits enforced at the write boundary. */
 export const FOLDERS_PER_WORKSPACE_LIMIT = 32
+export const MEMBERS_PER_WORKSPACE_LIMIT = 16
 export const WORKSPACE_ID_LIMIT = 200
 export const FOLDER_PATH_LIMIT = 1024
+export const REMOTE_PATH_LIMIT = 1024
 
 /** `C:\…` or `C:/…` — a drive-rooted Windows path. */
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/u
@@ -110,6 +113,117 @@ function invalid(detail: string): never {
   throw new Error(`${FOLDERS_FILE_NAME}: ${detail}`)
 }
 
+/** Trim one optional free-form string field, dropping it when unusable. */
+function optionalText(value: unknown, limit: number, fail: (detail: string) => void): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') {
+    fail('member text fields must be strings')
+    return undefined
+  }
+  const text = value.trim()
+  if (text === '' || text.length > limit || text.includes('\u0000')) return undefined
+  return text
+}
+
+/**
+ * Parse one workspace-backed ("member") folder.
+ *
+ * A member names a real DSH workspace whose own sidebar row is hidden while this
+ * entry lists it; the fields kept here are exactly what the browser needs to
+ * start a Session in that workspace and to label the row.
+ * @param value - raw member from the document.
+ * @param workspaceId - owning workspace id (used in messages and as a guard).
+ * @param folders - plain folder paths already accepted for this workspace.
+ * @param members - member folders already accepted for this workspace.
+ * @param fail - strict-mode reporter (throws) / tolerant no-op.
+ * @returns the normalized member, or undefined when unusable.
+ */
+function parseMember(
+  value: unknown,
+  workspaceId: string,
+  folders: readonly string[],
+  members: readonly FolderMember[],
+  fail: (detail: string) => void,
+): FolderMember | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    fail('member folders must be objects')
+    return undefined
+  }
+  const source = value as Record<string, unknown>
+  const rawPath = source.path
+  if (typeof rawPath !== 'string') {
+    fail('member folder path must be a string')
+    return undefined
+  }
+  const path = rawPath.trim()
+  if (path === '' || path.length > FOLDER_PATH_LIMIT || path.includes('\u0000')) {
+    fail(`member folder path must be 1-${FOLDER_PATH_LIMIT} characters without NUL`)
+    return undefined
+  }
+  if (!isAbsoluteFolderPath(path)) {
+    fail(`member folder path "${path}" must be absolute`)
+    return undefined
+  }
+  if (folders.some(folder => samePath(folder, path)) || members.some(member => samePath(member.path, path))) {
+    fail(`duplicate folder path "${path}"`)
+    return undefined
+  }
+  const rawId = source.workspaceId
+  if (typeof rawId !== 'string') {
+    fail('member workspaceId must be a string')
+    return undefined
+  }
+  const memberWorkspaceId = rawId.trim()
+  if (memberWorkspaceId === '' || memberWorkspaceId.length > WORKSPACE_ID_LIMIT
+    || memberWorkspaceId.includes('\u0000')) {
+    fail(`member workspaceId must be 1-${WORKSPACE_ID_LIMIT} characters without NUL`)
+    return undefined
+  }
+  if (memberWorkspaceId === workspaceId) {
+    fail('a workspace cannot be a member folder of itself')
+    return undefined
+  }
+  const kind = source.kind
+  if (kind !== 'local' && kind !== 'remote') {
+    fail('member kind must be "local" or "remote"')
+    return undefined
+  }
+  const title = optionalText(source.title, FOLDER_PATH_LIMIT, fail)
+  const keepTitle = title === undefined ? {} : { title }
+  if (kind === 'local') return { path, workspaceId: memberWorkspaceId, kind, ...keepTitle }
+
+  const rawRemote = source.remotePath
+  if (typeof rawRemote !== 'string') {
+    fail('a remote member folder needs its remotePath')
+    return undefined
+  }
+  const remotePath = rawRemote.trim()
+  if (remotePath === '' || remotePath.length > REMOTE_PATH_LIMIT || remotePath.includes('\u0000')) {
+    fail(`member remotePath must be 1-${REMOTE_PATH_LIMIT} characters without NUL`)
+    return undefined
+  }
+  const rawProfile = source.profileId
+  if (typeof rawProfile !== 'string') {
+    fail('a remote member folder needs its profileId')
+    return undefined
+  }
+  const profileId = rawProfile.trim()
+  if (profileId === '' || profileId.length > WORKSPACE_ID_LIMIT) {
+    fail(`member profileId must be 1-${WORKSPACE_ID_LIMIT} characters`)
+    return undefined
+  }
+  const recordId = optionalText(source.recordId, WORKSPACE_ID_LIMIT, fail)
+  return {
+    path,
+    workspaceId: memberWorkspaceId,
+    kind,
+    remotePath,
+    profileId,
+    ...(recordId === undefined ? {} : { recordId }),
+    ...keepTitle,
+  }
+}
+
 /**
  * Parse one workspace entry.
  * @param value - raw entry from the document.
@@ -176,20 +290,37 @@ function parseFolderEntry(
     folders.push(path)
   }
 
+  const members: FolderMember[] = []
+  if (source.members !== undefined) {
+    if (!Array.isArray(source.members)) {
+      fail('members must be a list')
+    } else {
+      if (strict && source.members.length > MEMBERS_PER_WORKSPACE_LIMIT) {
+        invalid(`workspace "${workspaceId}": at most ${MEMBERS_PER_WORKSPACE_LIMIT} member folders`)
+      }
+      for (const candidate of source.members) {
+        const member = parseMember(candidate, workspaceId, folders, members, fail)
+        if (member !== undefined) members.push(member)
+        if (members.length >= MEMBERS_PER_WORKSPACE_LIMIT) break
+      }
+    }
+  }
+
   let root: string | undefined
   if (source.root !== undefined) {
     if (typeof source.root !== 'string') {
       fail('root must be a string')
     } else {
       const candidate = source.root.trim()
-      const member = folders.find(folder => samePath(folder, candidate))
+      const member = [...folders, ...members.map(entry => entry.path)]
+        .find(folder => samePath(folder, candidate))
       if (member === undefined) fail(`root "${candidate}" must name one of folders`)
       else root = member
     }
   }
 
-  if (folders.length === 0 && root === undefined) return undefined
-  return { folders, ...(root === undefined ? {} : { root }) }
+  if (folders.length === 0 && members.length === 0 && root === undefined) return undefined
+  return { folders, ...(members.length === 0 ? {} : { members }), ...(root === undefined ? {} : { root }) }
 }
 
 /**

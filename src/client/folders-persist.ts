@@ -14,6 +14,7 @@
  */
 import {
   EMPTY_FOLDERS_DOCUMENT,
+  type FolderMember,
   type FoldersDocument,
   type WorkspaceFolderEntry,
 } from '../core/folders.ts'
@@ -32,23 +33,76 @@ export interface FoldersSnapshot {
   readonly remoteBase?: string
 }
 
+/** One non-empty string field, or undefined when it is absent or blank. */
+function wireText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+/**
+ * Read one member (a folder backed by its own workspace) off the wire.
+ * @param value - one value of the stored `members` list.
+ * @returns the member, or null for a malformed one.
+ */
+function parseWireMember(value: unknown): FolderMember | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  const path = wireText(row.path)
+  const workspaceId = wireText(row.workspaceId)
+  // A member without a directory or without its workspace cannot run a session,
+  // so it is not worth a row.
+  if (path === undefined || workspaceId === undefined) return null
+  const remotePath = wireText(row.remotePath)
+  const profileId = wireText(row.profileId)
+  const recordId = wireText(row.recordId)
+  const title = wireText(row.title)
+  return {
+    path,
+    workspaceId,
+    kind: row.kind === 'remote' ? 'remote' : 'local',
+    ...(remotePath === undefined ? {} : { remotePath }),
+    ...(profileId === undefined ? {} : { profileId }),
+    ...(recordId === undefined ? {} : { recordId }),
+    ...(title === undefined ? {} : { title }),
+  }
+}
+
 /**
  * Read one workspace entry off the wire, dropping the entry when it is
  * unusable.
+ *
+ * `members` must survive this round trip: the client owns the whole document
+ * (the PUT sends it back verbatim), so an entry parsed without its members is
+ * not merely a display gap — the next folder edit would rewrite the sidecar and
+ * erase every member-backed folder for good.
  * @param value - one value of the stored `workspaces` mapping.
  * @returns the entry, or null for a malformed one.
  */
 function parseWireEntry(value: unknown): WorkspaceFolderEntry | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const row = value as Record<string, unknown>
-  if (!Array.isArray(row.folders)) return null
   const folders: string[] = []
-  for (const candidate of row.folders) {
-    if (typeof candidate !== 'string' || candidate.trim() === '') continue
-    folders.push(candidate)
+  if (Array.isArray(row.folders)) {
+    for (const candidate of row.folders) {
+      const path = wireText(candidate)
+      if (path !== undefined) folders.push(path)
+    }
   }
-  const root = typeof row.root === 'string' && row.root.trim() !== '' ? row.root : undefined
-  return { folders, ...(root === undefined ? {} : { root }) }
+  const members: FolderMember[] = []
+  if (Array.isArray(row.members)) {
+    for (const candidate of row.members) {
+      const member = parseWireMember(candidate)
+      if (member !== null) members.push(member)
+    }
+  }
+  if (folders.length === 0 && members.length === 0) return null
+  const root = wireText(row.root)
+  return {
+    folders,
+    ...(members.length === 0 ? {} : { members }),
+    ...(root === undefined ? {} : { root }),
+  }
 }
 
 /**

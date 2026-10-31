@@ -16,9 +16,45 @@
  * Everything here is pure and platform-agnostic: it imports no React, no DOM
  * and no cordis so plain Node (the verifier, the host route) can load it.
  */
+/** Kind of a member folder: a plain local directory, or an SSH-mirrored one. */
+export type FolderMemberKind = 'local' | 'remote';
+/**
+ * A folder row that is backed by its OWN DSH workspace ("member").
+ *
+ * Plain extra folders ( {@link WorkspaceFolderEntry.folders} ) live inside the
+ * owner's canonical directory tree and their sessions run with the OWNER's
+ * workspace id. A member has a directory the owner cannot reach that way — a
+ * remote (mirror-backed) folder, or a local directory added to a remote project
+ * — so the platform registers a real workspace for it and the row delegates
+ * session creation to that workspace id. The member's own workspace row is
+ * hidden from the sidebar while some entry lists it (see
+ * {@link absorbedWorkspaceIds}), so the project reads as one project with both
+ * kinds of folders.
+ */
+export interface FolderMember {
+    /** Absolute LOCAL path of the member workspace (its canonical directory). */
+    readonly path: string;
+    /** Native DSH workspace id backing this folder row. */
+    readonly workspaceId: string;
+    readonly kind: FolderMemberKind;
+    /** Remote root, when `kind` is 'remote' (`~`, `~/proj`, `/srv/proj`). */
+    readonly remotePath?: string;
+    /** SSH connection profile id, when `kind` is 'remote'. */
+    readonly profileId?: string;
+    /** remote-ssh's own record id, when `kind` is 'remote'. */
+    readonly recordId?: string;
+    /** Display title the platform gave the member workspace. */
+    readonly title?: string;
+}
 /** Folders attached to one workspace: EXTRA folders only (the base is implicit). */
 export interface WorkspaceFolderEntry {
+    /**
+     * Plain local extra folders: directories the owner workspace can address
+     * directly, so their sessions keep the owner's workspace id.
+     */
     readonly folders: readonly string[];
+    /** Workspace-backed extra folders (remote mirrors, or local on a remote owner). */
+    readonly members?: readonly FolderMember[];
     readonly root?: string;
 }
 /** The whole `workspace-groups.folders.json` document. */
@@ -50,6 +86,34 @@ export declare function entryFor(doc: FoldersDocument, workspaceId: string): Wor
  */
 export declare function effectiveFolders(workspacePath: string, entry: WorkspaceFolderEntry | undefined): readonly string[];
 /**
+ * The member record behind one folder path, when that folder is workspace-backed.
+ * @param entry - saved folder entry, if any.
+ * @param path - folder path as stored.
+ */
+export declare function memberOf(entry: WorkspaceFolderEntry | undefined, path: string): FolderMember | undefined;
+/**
+ * Every member folder of one owner workspace, in stored order.
+ * @param doc - folders document.
+ * @param ownerWorkspaceId - workspace the members hang off.
+ */
+export declare function membersOf(doc: FoldersDocument, ownerWorkspaceId: string): readonly FolderMember[];
+/**
+ * Member workspace id → owning workspace id.
+ *
+ * These are the workspaces whose own row disappears from the sidebar: their
+ * sessions render under the owning project's folder row instead. A workspace
+ * that is itself an owner (it carries an entry) is never absorbed — absorbing
+ * it would hide a project together with the folders nested below it.
+ * @param doc - folders document.
+ */
+export declare function absorbedWorkspaceIds(doc: FoldersDocument): ReadonlyMap<string, string>;
+/**
+ * True when the entry carries neither a plain folder nor a member, i.e. it can
+ * be dropped from the sidecar instead of being written empty.
+ * @param entry - folder entry.
+ */
+export declare function isEmptyEntry(entry: WorkspaceFolderEntry | undefined): boolean;
+/**
  * The folder new sessions start in by default.
  * @param workspacePath - canonical directory of the workspace.
  * @param entry - saved folder entry, if any.
@@ -74,9 +138,17 @@ export declare function folderOfCwd(cwd: string | undefined, workspacePath: stri
  */
 export declare function addFolder(entry: WorkspaceFolderEntry | undefined, path: string): WorkspaceFolderEntry;
 /**
- * Drop an extra folder. A root that pointed at it is cleared, so the workspace
- * falls back to its own directory instead of referencing a folder it no longer
- * has.
+ * Append a workspace-backed folder. Idempotent under `samePath`: a later call
+ * for the same path replaces the stored member (so a re-registered workspace id
+ * wins) instead of stacking a duplicate row.
+ * @param entry - current entry, or undefined for a workspace with no extras.
+ * @param member - member record to store.
+ */
+export declare function addMember(entry: WorkspaceFolderEntry | undefined, member: FolderMember): WorkspaceFolderEntry;
+/**
+ * Drop an extra folder, plain or workspace-backed. A root that pointed at it is
+ * cleared, so the workspace falls back to its own directory instead of
+ * referencing a folder it no longer has.
  * @param entry - current entry, or undefined.
  * @param path - folder path to drop.
  */

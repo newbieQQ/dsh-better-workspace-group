@@ -19,6 +19,7 @@ import { indexSubagentDescendants, type SubagentDescendantSummary } from './suba
 import { isDefaultWorkspace } from '../core/default-workspace.ts'
 import { categoryAppearance, effectiveCategories, orderedWorkspaceIds, resolveCategory } from '../core/matcher.ts'
 import {
+  absorbedWorkspaceIds,
   EMPTY_FOLDERS_DOCUMENT,
   effectiveFolders,
   entryFor,
@@ -231,12 +232,91 @@ function workspaceSessions(
   return nodes
 }
 
+/** A workspace-backed ("member") folder resolved against the workspace list. */
+export interface MemberWorkspaces {
+  /** Member workspace id → owning workspace id (the rows to hide). */
+  absorbed: ReadonlyMap<string, string>
+  /** Owning workspace id → member workspaces in stored folder order. */
+  byOwner: ReadonlyMap<string, readonly WorkspaceView[]>
+}
+
+/**
+ * Resolve the workspace-backed folders of every project.
+ *
+ * A member folder is a real DSH workspace whose OWN row must disappear: its
+ * sessions are rendered under its owner's folder row instead, so one project can
+ * carry local and cloud (SSH-mirrored) folders at once. Members the Host no
+ * longer knows are dropped from the index — the folder row survives (its path is
+ * still stored) but shows no sessions.
+ * @param workspaces - real workspaces in Host order.
+ * @param folders - per-workspace extra folders + members + root.
+ */
+export function memberWorkspaces(
+  workspaces: readonly WorkspaceView[],
+  folders: FoldersDocument = EMPTY_FOLDERS_DOCUMENT,
+): MemberWorkspaces {
+  const byId = new Map<string, WorkspaceView>()
+  for (const workspace of workspaces) byId.set(workspace.workspaceId as string, workspace)
+  // Only an owner that still exists may hide a row: if the project itself is gone,
+  // its members must come back as their own rows instead of staying invisible. A
+  // chained member (an absorbed project that owns members of its own) is refused
+  // for the same reason — nesting would swallow the inner sessions.
+  const stored = absorbedWorkspaceIds(folders)
+  const absorbed = new Map<string, string>()
+  for (const [memberId, ownerId] of stored) {
+    if (!byId.has(ownerId) || stored.has(ownerId)) continue
+    absorbed.set(memberId, ownerId)
+  }
+  const byOwner = new Map<string, WorkspaceView[]>()
+  for (const [ownerId, entry] of Object.entries(folders.workspaces)) {
+    for (const member of entry.members ?? []) {
+      if (absorbed.get(member.workspaceId) !== ownerId) continue
+      const view = byId.get(member.workspaceId)
+      if (view === undefined) continue
+      const bucket = byOwner.get(ownerId)
+      if (bucket === undefined) byOwner.set(ownerId, [view])
+      else bucket.push(view)
+    }
+  }
+  return { absorbed, byOwner }
+}
+
+/** Visible sessions of a project: its own rows plus every member folder's rows. */
+function sessionsWithMembers(
+  list: SessionListState,
+  workspace: WorkspaceView,
+  members: readonly WorkspaceView[],
+  archived: ReadonlySet<SessionId>,
+  descendants: ReadonlyMap<SessionId, SubagentDescendantSummary>,
+  statuses: SessionStatuses,
+  current: SessionId | undefined,
+): SessionNode[] {
+  if (members.length === 0) {
+    return workspaceSessions(list, workspace, archived, descendants, statuses, current)
+  }
+  const nodes = workspaceSessions(list, workspace, archived, descendants, statuses, current)
+  for (const member of members) {
+    nodes.push(...workspaceSessions(list, member, archived, descendants, statuses, current))
+  }
+  return nodes
+}
+
+/** Whether a session lives in this project or in one of its member folders. */
+function projectHoldsSession(
+  workspace: WorkspaceView,
+  members: readonly WorkspaceView[],
+  sessionId: SessionId | undefined,
+): boolean {
+  if (sessionId === undefined) return false
+  if (workspace.sessionIds.includes(sessionId)) return true
+  return members.some(member => member.sessionIds.includes(sessionId))
+}
+
 /**
  * Display label of one folder: the last path segment. A drive root (`C:\`) or
  * the POSIX root has no segment, so the whole path is the honest label.
  * @param path - absolute folder path.
- */
-export function folderLabel(path: string): string {
+ */export function folderLabel(path: string): string {
   const trimmed = path.replace(/[/\\]+$/u, '')
   if (trimmed === '' || /^[A-Za-z]:$/u.test(trimmed)) return path
   const base = trimmed.split(/[/\\]/u).pop()
@@ -246,6 +326,25 @@ export function folderLabel(path: string): string {
 /** Stable identity of one folder row (same path may live under two workspaces). */
 export function folderKey(workspaceId: WorkspaceId, path: string): string {
   return `${workspaceId}\u0000${path}`
+}
+
+/**
+ * Display labels for member folders.
+ *
+ * A cloud member's directory is a locally generated mirror id (`wabc123`), which
+ * says nothing to the user: its REMOTE path or title is the honest label. Local
+ * members keep the last path segment, like every other folder.
+ * @param folders - per-workspace folders + members.
+ */
+function memberFolderLabels(entry: WorkspaceFolderEntry | undefined): Map<string, string> {
+  const labels = new Map<string, string>()
+  for (const member of entry?.members ?? []) {
+    const label = member.kind === 'remote'
+      ? (member.title ?? folderLabel(member.remotePath ?? member.path))
+      : folderLabel(member.path)
+    if (label !== '') labels.set(member.path, label)
+  }
+  return labels
 }
 
 /**
@@ -270,6 +369,7 @@ function applyFolders(
   entry: WorkspaceFolderEntry | undefined,
   collapsedFolders: ReadonlySet<string> | undefined,
 ): { sessions: readonly SessionNode[]; folders?: readonly FolderNode[] } {
+  const labels = memberFolderLabels(entry)
   const extras = effectiveFolders(workspacePath, entry).slice(1)
   if (extras.length === 0) return { sessions }
   const root = rootOf(workspacePath, entry)
@@ -289,7 +389,7 @@ function applyFolders(
     const owned = isBase ? base : (byFolder.get(path) ?? [])
     return {
       path,
-      label: folderLabel(path),
+      label: labels.get(path) ?? folderLabel(path),
       isRoot: samePath(path, root),
       expanded: collapsedFolders === undefined || !collapsedFolders.has(folderKey(workspaceId, path)),
       isBase,
@@ -346,6 +446,7 @@ export function deriveGroups(
   const collapsedFolders = new Set(view.collapsedFolders ?? [])
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
+  const members = memberWorkspaces(workspaces, folders)
 
   // Bucket workspaces by display key. Seed with every effective category so
   // manual groups render while empty. Top-level (ungrouped) workspaces are
@@ -357,6 +458,8 @@ export function deriveGroups(
   for (const workspace of workspaces) {
     // The Host default workspace is pinned to its own bottom bar, never grouped.
     if (isDefaultWorkspace(workspace)) continue
+    // Member folders render inside their owner; their own row is not a project.
+    if (members.absorbed.has(workspace.workspaceId as string)) continue
     const key = resolveCategory(config, manual, workspace.workspaceId, workspace.path, workspace.title)
     if (key === undefined) continue // top-level — rendered by deriveTopLevel
     if (!byCategory.has(key)) byCategory.set(key, [])
@@ -366,7 +469,8 @@ export function deriveGroups(
   const manualCategories = new Set(manual.categories)
   const currentWorkspaceId = current === undefined
     ? undefined
-    : workspaces.find(w => w.sessionIds.includes(current))?.workspaceId
+    : workspaces.find(w => !members.absorbed.has(w.workspaceId as string)
+      && projectHoldsSession(w, members.byOwner.get(w.workspaceId as string) ?? [], current))?.workspaceId
 
   const nodes: CategoryNode[] = []
   // Effective categories in display order (categoryOrder applied).
@@ -381,7 +485,8 @@ export function deriveGroups(
     for (const workspaceId of ordered) {
       const workspace = bucket.find(w => w.workspaceId === workspaceId)
       if (workspace === undefined) continue
-      const sessions = workspaceSessions(list, workspace, archived, descendants, statuses, current)
+      const ownerMembers = members.byOwner.get(workspace.workspaceId as string) ?? []
+      const sessions = sessionsWithMembers(list, workspace, ownerMembers, archived, descendants, statuses, current)
       const wsExpanded = expandedWorkspaces.has(workspace.workspaceId as string)
       const wsContainsCurrent = workspace.workspaceId === currentWorkspaceId
       const partitioned = applyFolders(
@@ -440,12 +545,15 @@ export function deriveTopLevel(
   const collapsedFolders = new Set(view.collapsedFolders ?? [])
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
+  const members = memberWorkspaces(workspaces, folders)
   const currentWorkspaceId = current === undefined
     ? undefined
-    : workspaces.find(w => w.sessionIds.includes(current))?.workspaceId
+    : workspaces.find(w => !members.absorbed.has(w.workspaceId as string)
+      && projectHoldsSession(w, members.byOwner.get(w.workspaceId as string) ?? [], current))?.workspaceId
 
   const topLevelIds = workspaces
     .filter(w => !isDefaultWorkspace(w))
+    .filter(w => !members.absorbed.has(w.workspaceId as string))
     .filter(w => resolveCategory(config, manual, w.workspaceId, w.path, w.title) === undefined)
     .map(w => w.workspaceId as string)
   const ordered = orderedWorkspaceIds(manual, TOP_LEVEL_ORDER_KEY, topLevelIds)
@@ -454,7 +562,8 @@ export function deriveTopLevel(
   for (const workspaceId of ordered) {
     const workspace = workspaces.find(w => w.workspaceId === workspaceId)
     if (workspace === undefined) continue
-    const sessions = workspaceSessions(list, workspace, archived, descendants, statuses, current)
+    const ownerMembers = members.byOwner.get(workspaceId) ?? []
+    const sessions = sessionsWithMembers(list, workspace, ownerMembers, archived, descendants, statuses, current)
     const wsExpanded = expandedWorkspaces.has(workspaceId)
     const partitioned = applyFolders(
       workspace.workspaceId,
@@ -511,7 +620,9 @@ export function deriveDefaultWorkspace(
   const collapsedFolders = new Set(view.collapsedFolders ?? [])
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
-  const sessions = workspaceSessions(list, workspace, archived, descendants, statuses, current)
+  const members = memberWorkspaces(workspaces, folders)
+  const ownerMembers = members.byOwner.get(workspace.workspaceId as string) ?? []
+  const sessions = sessionsWithMembers(list, workspace, ownerMembers, archived, descendants, statuses, current)
   const wsExpanded = expandedWorkspaces.has(workspace.workspaceId as string)
   const partitioned = applyFolders(
     workspace.workspaceId,
@@ -528,7 +639,7 @@ export function deriveDefaultWorkspace(
     createdAt: Date.parse(workspace.createdAt),
     sessionCount: sessions.length,
     expanded: wsExpanded,
-    containsCurrent: current !== undefined && workspace.sessionIds.includes(current),
+    containsCurrent: projectHoldsSession(workspace, ownerMembers, current),
     sessions: wsExpanded ? partitioned.sessions : [],
     ...(partitioned.folders === undefined ? {} : { folders: partitioned.folders }),
   }
@@ -562,17 +673,27 @@ export function deriveSearchMatches(
   archivedSessionIds: readonly SessionId[],
   content: { items: readonly SessionSearchResultItem[]; hasMore: boolean },
   limit: number,
+  folders: FoldersDocument = EMPTY_FOLDERS_DOCUMENT,
 ): SearchMatchSet {
   const q = query.trim().toLowerCase()
   if (q === '') return { matchedIds: new Set(), snippetsBySession: new Map(), hasMore: false }
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
+  const members = memberWorkspaces(workspaces, folders)
 
+  // A member folder's sessions search as part of the project that shows them.
   const workspaceBySession = new Map<SessionId, WorkspaceView>()
   for (const workspace of workspaces) {
+    if (members.absorbed.has(workspace.workspaceId as string)) continue
+    const owner = workspace
     for (const sessionId of workspace.sessionIds) {
-      if (!workspaceBySession.has(sessionId)) workspaceBySession.set(sessionId, workspace)
+      if (!workspaceBySession.has(sessionId)) workspaceBySession.set(sessionId, owner)
+    }
+    for (const member of members.byOwner.get(workspace.workspaceId as string) ?? []) {
+      for (const sessionId of member.sessionIds) {
+        if (!workspaceBySession.has(sessionId)) workspaceBySession.set(sessionId, owner)
+      }
     }
   }
   const labelOf = (summary: SessionSummary): string =>
@@ -666,6 +787,7 @@ export function deriveSearchGroups(
   const archived = new Set(archivedSessionIds)
   const descendants = indexSubagentDescendants(list.byId)
   const current = currentSessionId(list)
+  const members = memberWorkspaces(workspaces, folders)
 
   const byCategory = new Map<string, WorkspaceGroupNode[]>()
   for (const key of effectiveCategories(config, manual).map(e => e.key)) byCategory.set(key, [])
@@ -673,19 +795,24 @@ export function deriveSearchGroups(
   const topLevel: WorkspaceGroupNode[] = []
   let defaultWorkspace: WorkspaceGroupNode | undefined
   for (const workspace of workspaces) {
+    // A member's own row is folded into its owner's folder row below.
+    if (members.absorbed.has(workspace.workspaceId as string)) continue
     // Only sessions that matched the query and are visible in this folder.
     const nodes: SessionNode[] = []
-    for (const id of workspace.sessionIds) {
-      const summary = list.byId[id]
-      if (summary === undefined || !matchedIds.has(id)) continue
-      if (!sessionVisible(summary, current, archived)) continue
-      const node = sessionNode(summary, descendants, statuses)
-      const snippet = snippetsBySession?.get(id)
-      nodes.push({
-        ...node,
-        matched: true,
-        ...(snippet === undefined ? {} : { snippet }),
-      })
+    const sources = [workspace, ...(members.byOwner.get(workspace.workspaceId as string) ?? [])]
+    for (const source of sources) {
+      for (const id of source.sessionIds) {
+        const summary = list.byId[id]
+        if (summary === undefined || !matchedIds.has(id)) continue
+        if (!sessionVisible(summary, current, archived)) continue
+        const node = sessionNode(summary, descendants, statuses)
+        const snippet = snippetsBySession?.get(id)
+        nodes.push({
+          ...node,
+          matched: true,
+          ...(snippet === undefined ? {} : { snippet }),
+        })
+      }
     }
     if (nodes.length === 0) continue
 

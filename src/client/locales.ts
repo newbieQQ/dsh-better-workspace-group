@@ -5,6 +5,7 @@
 import type { LocaleDictOf } from '@deepseek-ai/dsh-client-ui-slots'
 
 /** Dictionary keys of the workspaceGroups namespace (single source of truth). */
+
 export type WorkspaceGroupsKey =
   | 'section.workspaces'
   | 'section.sessions'
@@ -37,6 +38,9 @@ export type WorkspaceGroupsKey =
   | 'folder.title'
   | 'folder.manage'
   | 'folder.listAria'
+  | 'folder.sectionList'
+  | 'folder.sectionAdd'
+  | 'folder.emptyHint'
   | 'folder.base'
   | 'folder.setRoot'
   | 'folder.rootBadge'
@@ -55,6 +59,39 @@ export type WorkspaceGroupsKey =
   | 'folder.subpathPlaceholder'
   | 'folder.addSubpath'
   | 'folder.subpathInvalid'
+  | 'folder.cloudSection'
+  | 'folder.profileLabel'
+  | 'folder.remotePathLabel'
+  | 'folder.remotePathPlaceholder'
+  | 'folder.remotePathOrName'
+  | 'folder.createAndAdd'
+  | 'folder.cloudNoteBoth'
+  | 'folder.addRemote'
+  | 'folder.noProfiles'
+  | 'folder.profilesError'
+  | 'folder.cloudTag'
+  | 'folder.localTag'
+  | 'folder.memberMissing'
+  | 'folder.memberNested'
+  | 'folder.alreadyRoot'
+  | 'folder.addAria'
+  | 'folder.tabLocal'
+  | 'folder.tabCloud'
+  | 'folder.pickLocal'
+  | 'folder.localNote'
+  | 'folder.localIntoRemote'
+  | 'folder.cloudNote'
+  | 'folder.browse'
+  | 'folder.browseTitle'
+  | 'folder.browseListAria'
+  | 'folder.browseNote'
+  | 'folder.browseFailed'
+  | 'folder.chooseHere'
+  | 'folder.up'
+  | 'folder.home'
+  | 'folder.refresh'
+  | 'folder.loading'
+  | 'folder.emptyDir'
   | 'group.create'
   | 'group.createTitle'
   | 'group.createPlaceholder'
@@ -151,7 +188,7 @@ export type WorkspaceGroupsDict = LocaleDictOf<'workspaceGroups'>
 export const zh: WorkspaceGroupsDict = {
   'section.workspaces': '工作区',
   'section.sessions': '会话',
-  search: '搜索',
+  'search': '搜索',
   'search.placeholder': '搜索会话…',
   'search.clear': '清除',
   'search.noMatches': '没有匹配的会话',
@@ -180,6 +217,9 @@ export const zh: WorkspaceGroupsDict = {
   'folder.title': '文件夹',
   'folder.manage': '文件夹…',
   'folder.listAria': '工作区文件夹',
+  'folder.sectionList': '项目文件夹',
+  'folder.sectionAdd': '添加文件夹',
+  'folder.emptyHint': '还没有额外文件夹。下面挂一个目录，它的会话会独立运行，模型也能直接读到里面的文件。',
   'folder.base': '基础文件夹',
   'folder.setRoot': '设为根目录',
   'folder.rootBadge': '根目录',
@@ -198,6 +238,39 @@ export const zh: WorkspaceGroupsDict = {
   'folder.subpathPlaceholder': '例如 data',
   'folder.addSubpath': '创建文件夹',
   'folder.subpathInvalid': '路径无效：请填工作区内的相对路径，不能用绝对路径或 ..',
+  'folder.cloudSection': '云端文件夹',
+  'folder.profileLabel': 'SSH 连接',
+  'folder.remotePathLabel': '远端目录',
+  'folder.remotePathPlaceholder': '例如 ~/projects/app',
+  'folder.remotePathOrName': '例如 ~/projects/app，或新目录名',
+  'folder.createAndAdd': '新建并添加',
+  'folder.cloudNoteBoth': '填绝对路径：新建一个云端工作区（带本地镜像）；只填名字：在项目云端根目录下新建该目录并挂进来',
+  'folder.addRemote': '添加云端文件夹',
+  'folder.noProfiles': '没有可用的 SSH 连接：请先在 remote-ssh 插件中配置连接',
+  'folder.profilesError': '读取 SSH 连接失败',
+  'folder.cloudTag': '云端',
+  'folder.localTag': '本地',
+  'folder.memberMissing': '该文件夹对应的独立工作区已不存在，请移除后重新添加',
+  'folder.memberNested': '该目录本身已是一个含文件夹的项目，不能作为文件夹加入',
+  'folder.alreadyRoot': '这就是项目的根目录，不能再作为一个文件夹加入',
+  'folder.addAria': '添加文件夹的方式',
+  'folder.tabLocal': '本地目录',
+  'folder.tabCloud': '云端目录',
+  'folder.pickLocal': '选择本地目录…',
+  'folder.localNote': '在本机选一个目录，作为这个项目的文件夹',
+  'folder.localIntoRemote': '这个项目在云端；本地目录会作为本地文件夹挂到这个项目里',
+  'folder.cloudNote': '会为该远端目录建立本地镜像，并注册成一个工作区供会话使用',
+  'folder.browse': '浏览…',
+  'folder.browseTitle': '选择云端文件夹',
+  'folder.browseListAria': '远端目录列表',
+  'folder.browseNote': '只列出目录：点目录进入，用底部按钮选择当前目录。',
+  'folder.browseFailed': '读取远端目录失败',
+  'folder.chooseHere': '选择此目录',
+  'folder.up': '上一级',
+  'folder.home': '主目录',
+  'folder.refresh': '刷新',
+  'folder.loading': '正在读取远端目录…',
+  'folder.emptyDir': '这个目录下没有子目录',
   'group.create': '新建分组',
   'group.createTitle': '新建分组',
   'group.createPlaceholder': '分组名称',
@@ -252,17 +325,17 @@ export const zh: WorkspaceGroupsDict = {
   'session.renameConfirm': '重命名',
   'session.renameCancel': '取消',
   'session.renaming': '重命名中…',
-  uncategorized: '未分类',
+  'uncategorized': '未分类',
   'empty.none': '暂无内容',
   'empty.noWorkspaces': '还没有工作区',
-  close: '关闭',
-  cancel: '取消',
-  confirm: '确定',
-  retry: '重试',
-  configUnavailable: '分组配置不可用',
-  collapse: '折叠',
-  expandMore: '展开全部',
-  newSession: '新建会话',
+  'close': '关闭',
+  'cancel': '取消',
+  'confirm': '确定',
+  'retry': '重试',
+  'configUnavailable': '分组配置不可用',
+  'collapse': '折叠',
+  'expandMore': '展开全部',
+  'newSession': '新建会话',
   'quick.title': '快速切换',
   'quick.tab.workspaces': '工作区',
   'quick.tab.sessions': '全部会话',
@@ -293,7 +366,7 @@ export const zh: WorkspaceGroupsDict = {
 export const en: WorkspaceGroupsDict = {
   'section.workspaces': 'Workspaces',
   'section.sessions': 'Sessions',
-  search: 'Search',
+  'search': 'Search',
   'search.placeholder': 'Search sessions…',
   'search.clear': 'Clear',
   'search.noMatches': 'No matching sessions',
@@ -322,6 +395,9 @@ export const en: WorkspaceGroupsDict = {
   'folder.title': 'Folders',
   'folder.manage': 'Folders…',
   'folder.listAria': 'Workspace folders',
+  'folder.sectionList': 'Project folders',
+  'folder.sectionAdd': 'Add a folder',
+  'folder.emptyHint': 'No extra folders yet. A folder added below runs its sessions on its own, so the agent can read the files inside it directly.',
   'folder.base': 'Base folder',
   'folder.setRoot': 'Set as root',
   'folder.rootBadge': 'Root',
@@ -340,6 +416,39 @@ export const en: WorkspaceGroupsDict = {
   'folder.subpathPlaceholder': 'e.g. data',
   'folder.addSubpath': 'Create folder',
   'folder.subpathInvalid': 'Invalid path: use a relative path inside the workspace (no absolute paths, no ..)',
+  'folder.cloudSection': 'Cloud folders',
+  'folder.profileLabel': 'SSH connection',
+  'folder.remotePathLabel': 'Remote directory',
+  'folder.remotePathPlaceholder': 'e.g. ~/projects/app',
+  'folder.remotePathOrName': 'e.g. ~/projects/app, or a new folder name',
+  'folder.createAndAdd': 'Create and add',
+  'folder.cloudNoteBoth': 'A path creates a new cloud workspace with its local mirror; a bare name creates that directory under this project’s remote root and attaches it',
+  'folder.addRemote': 'Add cloud folder',
+  'folder.noProfiles': 'No SSH connection available: configure one in the remote-ssh plugin first',
+  'folder.profilesError': 'Could not read SSH connections',
+  'folder.cloudTag': 'Cloud',
+  'folder.localTag': 'Local',
+  'folder.memberMissing': 'The standalone workspace behind this folder no longer exists. Remove the folder and add it again.',
+  'folder.memberNested': 'That directory is a project with folders of its own, so it cannot join as a folder.',
+  'folder.alreadyRoot': 'That is the root of this project, so it cannot join as a folder.',
+  'folder.addAria': 'Ways to add a folder',
+  'folder.tabLocal': 'Local directory',
+  'folder.tabCloud': 'Cloud directory',
+  'folder.pickLocal': 'Choose a local directory…',
+  'folder.localNote': 'Pick a directory on this machine to use as a folder of this project',
+  'folder.localIntoRemote': 'This project lives on the SSH host; a local directory joins it as a local folder',
+  'folder.cloudNote': 'Mirrors that remote directory locally and registers a workspace for its sessions',
+  'folder.browse': 'Browse…',
+  'folder.browseTitle': 'Choose a cloud folder',
+  'folder.browseListAria': 'Remote directory list',
+  'folder.browseNote': 'Only directories are listed: enter one, then choose the current directory with the button below.',
+  'folder.browseFailed': 'Could not read the remote directory',
+  'folder.chooseHere': 'Choose this directory',
+  'folder.up': 'Up',
+  'folder.home': 'Home',
+  'folder.refresh': 'Refresh',
+  'folder.loading': 'Reading the remote directory…',
+  'folder.emptyDir': 'No subdirectories here',
   'group.create': 'New group',
   'group.createTitle': 'New group',
   'group.createPlaceholder': 'Group name',
@@ -394,17 +503,17 @@ export const en: WorkspaceGroupsDict = {
   'session.renameConfirm': 'Rename',
   'session.renameCancel': 'Cancel',
   'session.renaming': 'Renaming…',
-  uncategorized: 'Uncategorized',
+  'uncategorized': 'Uncategorized',
   'empty.none': 'Nothing here',
   'empty.noWorkspaces': 'No workspaces yet',
-  close: 'Close',
-  cancel: 'Cancel',
-  confirm: 'Confirm',
-  retry: 'Retry',
-  configUnavailable: 'Grouping config unavailable',
-  collapse: 'Collapse',
-  expandMore: 'Show all',
-  newSession: 'New Session',
+  'close': 'Close',
+  'cancel': 'Cancel',
+  'confirm': 'Confirm',
+  'retry': 'Retry',
+  'configUnavailable': 'Grouping config unavailable',
+  'collapse': 'Collapse',
+  'expandMore': 'Show all',
+  'newSession': 'New Session',
   'quick.title': 'Quick switch',
   'quick.tab.workspaces': 'Workspaces',
   'quick.tab.sessions': 'All sessions',
