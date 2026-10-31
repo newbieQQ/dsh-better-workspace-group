@@ -1,6 +1,6 @@
 {
   "name": "workspace-groups-local",
-  "version": "1.2.0",
+  "version": "1.1.0",
   "description": "Complete workspace grouping manager for the DSH web sidebar: category -> project -> session three-level tree with optional per-project folders (multi-root), manual group create/rename/delete, drag-and-drop grouping and ordering with insertion indicator, rule-based auto-classification, tree search, group colour/icon/pin, plus the session tab strip seated in the conversation column head. Sidecar YAML + runtime overlays, zero core-storage intrusion.",
   "keywords": [
     "dsh",
