@@ -15,6 +15,12 @@
  *
  * Everything here is pure and platform-agnostic: it imports no React, no DOM
  * and no cordis so plain Node (the verifier, the host route) can load it.
+ *
+ * Path rules are deliberately SHARED with the host validator. Both sides
+ * import from this module instead of re-deriving platform-dependent rules:
+ * a sidecar can legitimately hold Windows and POSIX spellings at once (a
+ * Windows client with a POSIX remote mirror, WSL, or a synced config), so
+ * absolute-path tests are made by SPELLING, never by `process.platform`.
  */
 
 /** Kind of a member folder: a plain local directory, or an SSH-mirrored one. */
@@ -76,9 +82,28 @@ const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/u
 /** `\\server\share` — a Windows UNC path. */
 const WINDOWS_UNC = /^\\\\/u
 
+/** A drive-relative spelling (`C:foo`) that is NOT an absolute path. */
+const WINDOWS_DRIVE_RELATIVE = /^[A-Za-z]:/u
+
+const BACKSLASH = '\\'
+const SLASH = '/'
+
 /** True for both Windows path spellings accepted by the write validator. */
-function isWindowsStyle(path: string): boolean {
+export function isWindowsStyle(path: string): boolean {
   return WINDOWS_DRIVE.test(path) || WINDOWS_UNC.test(path)
+}
+
+/**
+ * Absolute-path test by SPELLING, not by the current platform.
+ *
+ * The host write validator and this module must agree on exactly one rule.
+ * Earlier the host branched on `process.platform`, so a sidecar written on
+ * one platform was silently truncated when read on another (and then written
+ * back truncated). Accepting every spelling here keeps both sides consistent.
+ * @param path - raw path as stored or picked.
+ */
+export function isAbsoluteFolderPath(path: string): boolean {
+  return WINDOWS_DRIVE.test(path) || WINDOWS_UNC.test(path) || path.startsWith(SLASH)
 }
 
 /**
@@ -88,31 +113,68 @@ function isWindowsStyle(path: string): boolean {
  */
 function withoutTrailingSeparator(path: string): string {
   if (isWindowsStyle(path)) {
-    let value = path.replaceAll('/', '\\')
-    while (value.length > 3 && value.endsWith('\\')) value = value.slice(0, -1)
+    let value = path.replaceAll(SLASH, BACKSLASH)
+    while (value.length > 3 && value.endsWith(BACKSLASH)) value = value.slice(0, -1)
     return value
   }
   let value = path
-  while (value.length > 1 && value.endsWith('/')) value = value.slice(0, -1)
+  while (value.length > 1 && value.endsWith(SLASH)) value = value.slice(0, -1)
   return value
 }
 
 /**
- * Comparison form of one path: trimmed, separator-normalized and, for Windows
- * spellings, lower-cased (drive letters and file names are case-insensitive
- * there). Trailing separators are dropped except for a drive/UNC/root prefix.
+ * Lexically collapse `.` and `..` segments without touching the filesystem.
+ *
+ * A `..` that would climb above the root is dropped rather than escaping it,
+ * so `C:\a\..\b` and `C:\b` (or `/a/../b` and `/b`) compare equal. This is a
+ * pure string operation: symlinks and realpath are deliberately out of scope,
+ * but the previous behaviour — treating every spelling as unrelated — made
+ * session grouping and de-duplication silently wrong.
+ * @param value - separator-normalized path with trailing separators removed.
+ * @param windows - whether the spelling is Windows-style.
+ */
+function collapseSegments(value: string, windows: boolean): string {
+  let leading = ''
+  if (windows) {
+    const drive = /^[A-Za-z]:\\/u.exec(value)
+    if (drive !== null) leading = drive[0]
+    else if (value.startsWith('\\\\')) leading = '\\\\'
+  } else if (value.startsWith(SLASH)) {
+    leading = SLASH
+  }
+  const out: string[] = []
+  for (const segment of value.slice(leading.length).split(windows ? /[\\/]+/u : /\/+/u)) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') {
+      if (out.length > 0) out.pop()
+      continue
+    }
+    out.push(segment)
+  }
+  return leading + out.join(windows ? BACKSLASH : SLASH)
+}
+
+/**
+ * Comparison form of one path: trimmed, Unicode-normalized (NFC), lexically
+ * dot-collapsed, separator-normalized and, for Windows spellings, lower-cased
+ * (drive letters and file names are case-insensitive there).
+ *
+ * NFC matters on macOS/APFS, where `Café` and `Cafe\u0301` name the same
+ * directory; without it they became two folder rows.
  * @param path - raw path as stored or picked.
  * @returns the canonical comparison form.
  */
-function canonicalPath(path: string): string {
-  const trimmed = path.trim()
-  const value = withoutTrailingSeparator(trimmed)
-  return isWindowsStyle(trimmed) ? value.toLowerCase() : value
+export function canonicalPath(path: string): string {
+  const trimmed = path.trim().normalize('NFC')
+  const windows = isWindowsStyle(trimmed)
+  const value = collapseSegments(withoutTrailingSeparator(trimmed), windows)
+  return windows ? value.toLowerCase() : value
 }
 
 /**
  * Path equality: case-insensitive for Windows-style paths, tolerant of
- * trailing separators, exact for POSIX paths.
+ * trailing separators, `.`/`..` segments and Unicode normalization, exact for
+ * POSIX paths.
  * @param a - first path.
  * @param b - second path.
  */
@@ -173,6 +235,25 @@ export function membersOf(doc: FoldersDocument, ownerWorkspaceId: string): reado
 }
 
 /**
+ * Members that are safe to render under an owner.
+ *
+ * A member whose `workspaceId` is itself an owner (has its own entry) used to
+ * be skipped by {@link absorbedWorkspaceIds} but still rendered as a folder
+ * row by {@link effectiveFolders}: the same project appeared twice, with two
+ * independent session lists. The host write validator rejects such members;
+ * this helper makes the read side equally defensive for old sidecars.
+ * @param doc - folders document.
+ * @param ownerWorkspaceId - workspace the members hang off.
+ */
+export function validMembers(doc: FoldersDocument, ownerWorkspaceId: string): readonly FolderMember[] {
+  const owners = new Set(Object.keys(doc.workspaces))
+  return membersOf(doc, ownerWorkspaceId).filter(member =>
+    member.workspaceId !== ''
+    && member.workspaceId !== ownerWorkspaceId
+    && !owners.has(member.workspaceId))
+}
+
+/**
  * Member workspace id → owning workspace id.
  *
  * These are the workspaces whose own row disappears from the sidebar: their
@@ -182,12 +263,9 @@ export function membersOf(doc: FoldersDocument, ownerWorkspaceId: string): reado
  * @param doc - folders document.
  */
 export function absorbedWorkspaceIds(doc: FoldersDocument): ReadonlyMap<string, string> {
-  const owners = new Set(Object.keys(doc.workspaces))
   const absorbed = new Map<string, string>()
-  for (const [ownerId, entry] of Object.entries(doc.workspaces)) {
-    for (const member of entry.members ?? []) {
-      if (member.workspaceId === '' || member.workspaceId === ownerId) continue
-      if (owners.has(member.workspaceId)) continue
+  for (const [ownerId] of Object.entries(doc.workspaces)) {
+    for (const member of validMembers(doc, ownerId)) {
       if (!absorbed.has(member.workspaceId)) absorbed.set(member.workspaceId, ownerId)
     }
   }
@@ -220,6 +298,9 @@ export function rootOf(workspacePath: string, entry: WorkspaceFolderEntry | unde
 /**
  * Owning folder of a session cwd: the most specific (longest) effective folder
  * that equals the cwd or is a proper path ancestor of it.
+ *
+ * Both sides are {@link canonicalPath}-normalized, so `..` segments and mixed
+ * separator spellings no longer mis-group a session into the project base.
  * @param cwd - recorded session cwd; undefined means "the workspace itself".
  * @param workspacePath - canonical directory of the workspace.
  * @param entry - saved folder entry, if any.
@@ -237,7 +318,7 @@ export function folderOfCwd(
   for (const folder of effectiveFolders(workspacePath, entry)) {
     const root = canonicalPath(folder)
     if (root === '') continue
-    const separator = isWindowsStyle(root) ? '\\' : '/'
+    const separator = isWindowsStyle(root) ? BACKSLASH : SLASH
     const prefix = root.endsWith(separator) ? root : `${root}${separator}`
     if (target !== root && !target.startsWith(prefix)) continue
     if (root.length > bestLength) {
@@ -272,6 +353,11 @@ export function addFolder(entry: WorkspaceFolderEntry | undefined, path: string)
  * Append a workspace-backed folder. Idempotent under `samePath`: a later call
  * for the same path replaces the stored member (so a re-registered workspace id
  * wins) instead of stacking a duplicate row.
+ *
+ * Unlike an earlier version, re-registering a member does NOT clear a `root`
+ * that points at the same path: the folder still exists and still resolves in
+ * {@link rootOf}, so silently resetting the default session directory would
+ * change behaviour the user never asked for.
  * @param entry - current entry, or undefined for a workspace with no extras.
  * @param member - member record to store.
  */
@@ -279,7 +365,7 @@ export function addMember(entry: WorkspaceFolderEntry | undefined, member: Folde
   const folders = (entry?.folders ?? []).filter(folder => !samePath(folder, member.path))
   const members = (entry?.members ?? []).filter(existing => !samePath(existing.path, member.path))
   const root = entry?.root
-  const keepRoot = root === undefined || samePath(root, member.path) ? {} : { root }
+  const keepRoot = root === undefined ? {} : { root }
   return { folders: [...folders], members: [...members, member], ...keepRoot }
 }
 
@@ -287,6 +373,9 @@ export function addMember(entry: WorkspaceFolderEntry | undefined, member: Folde
  * Drop an extra folder, plain or workspace-backed. A root that pointed at it is
  * cleared, so the workspace falls back to its own directory instead of
  * referencing a folder it no longer has.
+ *
+ * Note: this is a pure data edit. Unregistering the native workspace behind a
+ * member is a side effect the caller must perform (and undo on a failed save).
  * @param entry - current entry, or undefined.
  * @param path - folder path to drop.
  */
@@ -318,7 +407,8 @@ export function setRoot(entry: WorkspaceFolderEntry | undefined, path: string): 
 
 /**
  * True when `path` is `base` itself or lives somewhere below it, with the same
- * separator and case rules as {@link samePath}.
+ * separator and case rules as {@link samePath}. `..` segments are collapsed on
+ * both sides first, so a traversal spelling cannot fake containment.
  * @param path - candidate path.
  * @param base - containing directory.
  */
@@ -327,7 +417,7 @@ export function isUnderBase(path: string, base: string): boolean {
   const target = canonicalPath(path)
   if (root === '' || target === '') return false
   if (target === root) return true
-  const separator = isWindowsStyle(root) ? '\\' : '/'
+  const separator = isWindowsStyle(root) ? BACKSLASH : SLASH
   const prefix = root.endsWith(separator) ? root : `${root}${separator}`
   return target.startsWith(prefix)
 }
@@ -349,11 +439,12 @@ export function joinSubpath(base: string, relative: string): string | null {
   const root = base.trim()
   const raw = relative.trim()
   if (root === '' || raw === '') return null
-  if (WINDOWS_DRIVE.test(raw) || WINDOWS_UNC.test(raw) || raw.startsWith('/')) return null
+  if (WINDOWS_DRIVE.test(raw) || WINDOWS_DRIVE_RELATIVE.test(raw)
+    || WINDOWS_UNC.test(raw) || raw.startsWith(SLASH)) return null
   const segments = raw.split(/[\\/]+/u).filter(segment => segment !== '' && segment !== '.')
   if (segments.length === 0) return null
   if (segments.includes('..')) return null
   const windows = isWindowsStyle(root)
-  const separator = windows ? '\\' : '/'
+  const separator = windows ? BACKSLASH : SLASH
   return `${withoutTrailingSeparator(root)}${separator}${segments.join(separator)}`
 }

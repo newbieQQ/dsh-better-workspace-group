@@ -15,6 +15,12 @@
  *
  * Everything here is pure and platform-agnostic: it imports no React, no DOM
  * and no cordis so plain Node (the verifier, the host route) can load it.
+ *
+ * Path rules are deliberately SHARED with the host validator. Both sides
+ * import from this module instead of re-deriving platform-dependent rules:
+ * a sidecar can legitimately hold Windows and POSIX spellings at once (a
+ * Windows client with a POSIX remote mirror, WSL, or a synced config), so
+ * absolute-path tests are made by SPELLING, never by `process.platform`.
  */
 /** Kind of a member folder: a plain local directory, or an SSH-mirrored one. */
 export type FolderMemberKind = 'local' | 'remote';
@@ -64,9 +70,33 @@ export interface FoldersDocument {
 }
 /** Canonical empty document, shared so callers need not allocate one each time. */
 export declare const EMPTY_FOLDERS_DOCUMENT: FoldersDocument;
+/** True for both Windows path spellings accepted by the write validator. */
+export declare function isWindowsStyle(path: string): boolean;
+/**
+ * Absolute-path test by SPELLING, not by the current platform.
+ *
+ * The host write validator and this module must agree on exactly one rule.
+ * Earlier the host branched on `process.platform`, so a sidecar written on
+ * one platform was silently truncated when read on another (and then written
+ * back truncated). Accepting every spelling here keeps both sides consistent.
+ * @param path - raw path as stored or picked.
+ */
+export declare function isAbsoluteFolderPath(path: string): boolean;
+/**
+ * Comparison form of one path: trimmed, Unicode-normalized (NFC), lexically
+ * dot-collapsed, separator-normalized and, for Windows spellings, lower-cased
+ * (drive letters and file names are case-insensitive there).
+ *
+ * NFC matters on macOS/APFS, where `Café` and `Cafe\u0301` name the same
+ * directory; without it they became two folder rows.
+ * @param path - raw path as stored or picked.
+ * @returns the canonical comparison form.
+ */
+export declare function canonicalPath(path: string): string;
 /**
  * Path equality: case-insensitive for Windows-style paths, tolerant of
- * trailing separators, exact for POSIX paths.
+ * trailing separators, `.`/`..` segments and Unicode normalization, exact for
+ * POSIX paths.
  * @param a - first path.
  * @param b - second path.
  */
@@ -98,6 +128,18 @@ export declare function memberOf(entry: WorkspaceFolderEntry | undefined, path: 
  */
 export declare function membersOf(doc: FoldersDocument, ownerWorkspaceId: string): readonly FolderMember[];
 /**
+ * Members that are safe to render under an owner.
+ *
+ * A member whose `workspaceId` is itself an owner (has its own entry) used to
+ * be skipped by {@link absorbedWorkspaceIds} but still rendered as a folder
+ * row by {@link effectiveFolders}: the same project appeared twice, with two
+ * independent session lists. The host write validator rejects such members;
+ * this helper makes the read side equally defensive for old sidecars.
+ * @param doc - folders document.
+ * @param ownerWorkspaceId - workspace the members hang off.
+ */
+export declare function validMembers(doc: FoldersDocument, ownerWorkspaceId: string): readonly FolderMember[];
+/**
  * Member workspace id → owning workspace id.
  *
  * These are the workspaces whose own row disappears from the sidebar: their
@@ -124,6 +166,9 @@ export declare function rootOf(workspacePath: string, entry: WorkspaceFolderEntr
 /**
  * Owning folder of a session cwd: the most specific (longest) effective folder
  * that equals the cwd or is a proper path ancestor of it.
+ *
+ * Both sides are {@link canonicalPath}-normalized, so `..` segments and mixed
+ * separator spellings no longer mis-group a session into the project base.
  * @param cwd - recorded session cwd; undefined means "the workspace itself".
  * @param workspacePath - canonical directory of the workspace.
  * @param entry - saved folder entry, if any.
@@ -141,6 +186,11 @@ export declare function addFolder(entry: WorkspaceFolderEntry | undefined, path:
  * Append a workspace-backed folder. Idempotent under `samePath`: a later call
  * for the same path replaces the stored member (so a re-registered workspace id
  * wins) instead of stacking a duplicate row.
+ *
+ * Unlike an earlier version, re-registering a member does NOT clear a `root`
+ * that points at the same path: the folder still exists and still resolves in
+ * {@link rootOf}, so silently resetting the default session directory would
+ * change behaviour the user never asked for.
  * @param entry - current entry, or undefined for a workspace with no extras.
  * @param member - member record to store.
  */
@@ -149,6 +199,9 @@ export declare function addMember(entry: WorkspaceFolderEntry | undefined, membe
  * Drop an extra folder, plain or workspace-backed. A root that pointed at it is
  * cleared, so the workspace falls back to its own directory instead of
  * referencing a folder it no longer has.
+ *
+ * Note: this is a pure data edit. Unregistering the native workspace behind a
+ * member is a side effect the caller must perform (and undo on a failed save).
  * @param entry - current entry, or undefined.
  * @param path - folder path to drop.
  */
@@ -163,7 +216,8 @@ export declare function removeFolder(entry: WorkspaceFolderEntry | undefined, pa
 export declare function setRoot(entry: WorkspaceFolderEntry | undefined, path: string): WorkspaceFolderEntry;
 /**
  * True when `path` is `base` itself or lives somewhere below it, with the same
- * separator and case rules as {@link samePath}.
+ * separator and case rules as {@link samePath}. `..` segments are collapsed on
+ * both sides first, so a traversal spelling cannot fake containment.
  * @param path - candidate path.
  * @param base - containing directory.
  */

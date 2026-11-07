@@ -56,8 +56,8 @@ import type { WorkspaceGroupsKey } from './locales.ts'
 import { GROUP_EMOJI_ICONS, GROUP_ICON_LABELS } from './group-icon-labels.ts'
 import { SCIENCE_ICON_IDS, SCIENCE_ICON_SECTIONS } from './group-icons-science.tsx'
 import { EMPTY_FOLDERS_DOCUMENT, addFolder, addMember, effectiveFolders, entryFor, isEmptyEntry, isUnderBase, memberOf, removeFolder, rootOf, samePath, setRoot, type FolderMember, type FoldersDocument, type WorkspaceFolderEntry } from '../core/folders.ts'
-import { loadFolders, saveFolders } from './folders-persist.ts'
-import { createRemoteFolder, createWorkspaceDirectory, listRemoteProfiles, remoteFolderWorkspace, type RemoteFolderWorkspace, type RemoteProfileSummary } from './folder-directory.ts'
+import { FoldersConflictError, loadFolders, saveFolders, type FoldersSnapshot } from './folders-persist.ts'
+import { createRemoteFolder, createWorkspaceDirectory, listRemoteDirectory, listRemoteProfiles, remoteFolderWorkspace, type RemoteFolderWorkspace, type RemoteProfileSummary } from './folder-directory.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { FoldersDialog } from './FoldersDialog.tsx'
 import { QuickPanel } from './QuickPanel.tsx'
@@ -329,10 +329,23 @@ export function GroupsBrowser({
   // ---- Per-workspace folders (multi-root) -------------------------------------
   //
   // A second host sidecar (`/workspace-groups/folders`) lists each workspace's
-  // extra folders plus the optional root folder. It is read once per mount and
-  // written back whole, like the manual overlay above; a failed write is a
-  // toast rather than a banner because every edit here is a one-off row action.
+  // extra folders plus the optional root folder. The host sends an ETag-style
+  // revision with every read; the client sends it back as If-Match so a stale
+  // window can never overwrite a newer document. A failed read DISABLES editing
+  // rather than presenting an empty document: an empty document written back
+  // whole would erase every other workspace's folders for good.
   const [foldersDoc, setFoldersDoc] = useState<FoldersDocument>(EMPTY_FOLDERS_DOCUMENT)
+  // Refs are the write-side source of truth. React state is a render snapshot;
+  // a queued edit must see the document left by the previous edit, not the one
+  // from the render that scheduled it.
+  const foldersDocRef = useRef<FoldersDocument>(EMPTY_FOLDERS_DOCUMENT)
+  const foldersRevisionRef = useRef<string | undefined>(undefined)
+  const foldersQueueRef = useRef<Promise<unknown>>(Promise.resolve())
+  const foldersEditBlockedRef = useRef(true)
+  const foldersBlockedMessageRef = useRef<string | null>(null)
+  // A remote workspace already created by the SSH plugin but not yet recorded
+  // in the overlay. Reuse it on retry instead of creating a second mirror.
+  const createdRemotePendingSave = useRef<{ key: string; member: FolderMember } | null>(null)
   // Folder collapse is component state, not store state: it is a transient view
   // of the row list, like the quick panel, so it is deliberately NOT persisted
   // with the category/workspace expansion keys. Folders start expanded, so
@@ -347,15 +360,39 @@ export function GroupsBrowser({
   // a mirror of one remote root, so extra folders must be subdirectories of that
   // mirror —anything else would exist on this machine only.
   const [foldersRemoteBase, setFoldersRemoteBase] = useState<string | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    void loadFolders().then((snapshot) => {
-      if (cancelled) return
-      setFoldersDoc(snapshot.document)
-      setFoldersRemoteBase(snapshot.remoteBase ?? null)
+  const [foldersLoadError, setFoldersLoadError] = useState<string | null>(null)
+  const [foldersSchemaWarning, setFoldersSchemaWarning] = useState<string | null>(null)
+  const [foldersRemoteBaseWarning, setFoldersRemoteBaseWarning] = useState<string | null>(null)
+
+  /** Adopt a host snapshot (initial load, reload, or the body of a 409). */
+  const acceptFoldersSnapshot = (snapshot: FoldersSnapshot): void => {
+    foldersDocRef.current = snapshot.document
+    setFoldersDoc(snapshot.document)
+    foldersRevisionRef.current = snapshot.revision
+    // A conflict body always carries remoteBase; keep the last known value when
+    // a response omits it so remote detection does not silently switch off.
+    if (snapshot.remoteBase !== undefined) setFoldersRemoteBase(snapshot.remoteBase)
+    setFoldersSchemaWarning(snapshot.schemaWarning ?? null)
+    setFoldersRemoteBaseWarning(snapshot.remoteBaseWarning ?? null)
+    const blocked = snapshot.schemaWarning !== undefined
+    foldersEditBlockedRef.current = blocked
+    foldersBlockedMessageRef.current = snapshot.schemaWarning ?? null
+    setFoldersLoadError(null)
+  }
+
+  const reloadFolders = (): void => {
+    void loadFolders().then((result) => {
+      if (!result.ok) {
+        foldersEditBlockedRef.current = true
+        foldersBlockedMessageRef.current = `${t('folder.loadError')}: ${result.error}`
+        setFoldersLoadError(result.error)
+        return
+      }
+      acceptFoldersSnapshot(result.snapshot)
     })
-    return () => { cancelled = true }
-  }, [])
+  }
+
+  useEffect(() => { reloadFolders() }, [])
 
   const workspaces = useWorkspaces(state => state.items)
   const workspacePhase = useWorkspaces(state => state.phase)
@@ -747,22 +784,63 @@ export function GroupsBrowser({
     setFolderError({ id: Date.now(), text })
   }
 
-  const persistFolders = (next: FoldersDocument): void => {
-    setFoldersDoc(next)
-    saveFolders(next).catch((reason: unknown) => {
-      const detail = reason instanceof Error ? reason.message : String(reason)
-      notifyFolder(`${t('folder.saveError')}: ${detail}`)
-    })
+  /**
+   * Serialize every folder write. The transform is evaluated against the LIVE
+   * document when the queued task runs, so two edits scheduled in one tick
+   * compose instead of the second silently overwriting the first. A failed
+   * write restores the exact prior document; a 409 adopts the server's newer
+   * snapshot so the user can retry against the truth.
+   */
+  const queueFolderWrite = (transform: (doc: FoldersDocument) => FoldersDocument): Promise<boolean> => {
+    const task = async (): Promise<boolean> => {
+      if (foldersEditBlockedRef.current) {
+        notifyFolder(foldersBlockedMessageRef.current ?? t('folder.notReady'))
+        return false
+      }
+      const before = foldersDocRef.current
+      const next = transform(before)
+      if (next === before) return true
+      foldersDocRef.current = next
+      setFoldersDoc(next)
+      try {
+        const revision = await saveFolders(next, foldersRevisionRef.current)
+        foldersRevisionRef.current = revision
+        return true
+      } catch (reason) {
+        if (reason instanceof FoldersConflictError) {
+          acceptFoldersSnapshot(reason.current)
+          notifyFolder(`${t('folder.conflict')} ${t('folder.retry')}`)
+          return false
+        }
+        // Roll back to the exact document that was current when this write was
+        // queued; the optimistic render must never survive a rejected save.
+        foldersDocRef.current = before
+        setFoldersDoc(before)
+        notifyFolder(`${t('folder.saveError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+        return false
+      }
+    }
+    const run = foldersQueueRef.current.then(task, task)
+    foldersQueueRef.current = run.catch(() => undefined)
+    return run
   }
 
-  /** Write one workspace's entry; an entry with nothing attached removes the key. */
-  const writeFolderEntry = (workspaceId: WorkspaceId, entry: WorkspaceFolderEntry): void => {
-    const next: Record<string, WorkspaceFolderEntry> = { ...foldersDoc.workspaces }
+  /** Replace one workspace's entry; an empty entry removes its key entirely. */
+  const editFolderEntry = (
+    workspaceId: WorkspaceId,
+    transform: (entry: WorkspaceFolderEntry | undefined) => WorkspaceFolderEntry | undefined,
+  ): Promise<boolean> => queueFolderWrite((doc) => {
     const key = workspaceId as string
-    if (isEmptyEntry(entry)) delete next[key]
-    else next[key] = entry
-    persistFolders({ version: 1, workspaces: next })
-  }
+    const current = entryFor(doc, key)
+    const entry = transform(current)
+    // Returning undefined or the same reference means "no change" (e.g. a
+    // duplicate check inside the transform) and must not trigger a PUT.
+    if (entry === undefined || entry === current) return doc
+    const workspaces: Record<string, WorkspaceFolderEntry> = { ...doc.workspaces }
+    if (isEmptyEntry(entry)) delete workspaces[key]
+    else workspaces[key] = entry
+    return { version: 1, workspaces }
+  })
 
   const toggleFolder = (workspaceId: WorkspaceId, path: string): void => {
     const key = folderKey(workspaceId, path)
@@ -778,20 +856,33 @@ export function GroupsBrowser({
   const [foldersOwnerRemote, setFoldersOwnerRemote] = useState<string | null>(null)
   const foldersOwnerRequest = useRef('')
 
-  /** Open the folder dialog and learn the owner's remote root (cloud owners only). */
+  /**
+   * Open the folder dialog and learn the owner's remote root (cloud owners
+   * only). The SSH catalog may store `~/projects/app`; the remote browser works
+   * in absolute paths (`/home/me/projects/app`). Resolve the alias once so a
+   * picked subdirectory can be compared against the same absolute base —
+   * otherwise every browsed child looks like it lies OUTSIDE the project and
+   * is wrongly offered as a brand-new cloud workspace.
+   */
   const openFoldersFor = (workspaceId: string): void => {
     foldersOwnerRequest.current = workspaceId
     setFoldersTarget(workspaceId as WorkspaceId)
     setFoldersOwnerRemote(null)
     const workspace = workspaces.find(row => (row.workspaceId as string) === workspaceId)
     if (workspace === undefined || !isRemoteWorkspace(workspace) || foldersRemoteBase === null) return
-    void remoteFolderWorkspace(workspace.path, foldersRemoteBase).then(
-      (record) => {
-        if (foldersOwnerRequest.current !== workspaceId) return
-        setFoldersOwnerRemote(record === null ? null : record.remotePath)
-      },
-      () => { if (foldersOwnerRequest.current === workspaceId) setFoldersOwnerRemote(null) },
-    )
+    void remoteFolderWorkspace(workspace.path, foldersRemoteBase)
+      .then(async (record) => {
+        if (record === null) return null
+        const listing = await listRemoteDirectory(record.profileId, record.remotePath)
+        return listing.resolved === '' ? record.remotePath : listing.resolved
+      })
+      .then(
+        (resolved) => {
+          if (foldersOwnerRequest.current !== workspaceId) return
+          setFoldersOwnerRemote(resolved)
+        },
+        () => { if (foldersOwnerRequest.current === workspaceId) setFoldersOwnerRemote(null) },
+      )
   }
 
   /** The overlay record for a picked path that the SSH plugin already mirrors. */
@@ -831,16 +922,24 @@ export function GroupsBrowser({
    * instead of forked; one that owns folders of its own is refused, because
    * nesting a folder tree inside another would hide the inner folders' sessions.
    */
-  const memberWorkspaceFor = async (workspaceId: WorkspaceId, path: string): Promise<FolderMember> => {
+  const memberWorkspaceFor = async (
+    workspaceId: WorkspaceId, path: string,
+  ): Promise<{ member: FolderMember; created: boolean }> => {
     const existing = workspaces.find(w => samePath(w.path, path) && w.workspaceId !== workspaceId)
     if (existing !== undefined) {
-      if (!isEmptyEntry(entryFor(foldersDoc, existing.workspaceId as string))) {
+      if (!isEmptyEntry(entryFor(foldersDocRef.current, existing.workspaceId as string))) {
         throw new Error(t('folder.memberNested'))
       }
-      return { path, workspaceId: existing.workspaceId as string, kind: 'local' }
+      return { member: { path, workspaceId: existing.workspaceId as string, kind: 'local' }, created: false }
     }
     const created = await createWorkspace({ path })
-    return { path, workspaceId: created.workspaceId as string, kind: 'local' }
+    return { member: { path, workspaceId: created.workspaceId as string, kind: 'local' }, created: true }
+  }
+
+  /** Undo a native workspace we created but failed to record in the overlay. */
+  const undoCreatedMember = async (member: FolderMember, created: boolean): Promise<void> => {
+    if (!created) return
+    try { await deleteWorkspace(member.workspaceId as WorkspaceId) } catch { /* best effort */ }
   }
 
   const addFolderTo = async (workspaceId: WorkspaceId): Promise<void> => {
@@ -852,8 +951,13 @@ export function GroupsBrowser({
       if (foldersRemoteBase === null) throw new Error(t('folder.notReady'))
       const path = await pickDirectory()
       if (path === null) return // cancelled
-      const entry = entryFor(foldersDoc, workspaceId as string)
-      if (effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))) {
+      // Checked again inside the queued transform so a concurrent edit cannot
+      // slip a duplicate in between the check and the write. The early check
+      // also avoids creating a native workspace that we would only have to undo.
+      const isDuplicate = (entry: WorkspaceFolderEntry | undefined): boolean => (
+        effectiveFolders(workspace.path, entry).some(folder => samePath(folder, path))
+      )
+      if (isDuplicate(entryFor(foldersDocRef.current, workspaceId as string))) {
         notifyFolder(t('folder.duplicate'))
         return
       }
@@ -865,7 +969,9 @@ export function GroupsBrowser({
       if (target !== null) {
         if (samePath(target.mirrorPath, path) && target.workspaceId !== ''
           && target.workspaceId !== (workspaceId as string)) {
-          writeFolderEntry(workspaceId, addMember(entry, remoteMember(target)))
+          await editFolderEntry(workspaceId, (current) => (
+            isDuplicate(current) ? current : addMember(current, remoteMember(target))
+          ))
           return
         }
         notifyFolder(t('folder.remoteNeedsSubpath'))
@@ -876,10 +982,16 @@ export function GroupsBrowser({
       // there then runs natively with no cross-workspace cwd. Folders along the
       // tree stay plain — one cheap cwd gesture, grouped under this project.
       if (!isUnderBase(path, workspace.path)) {
-        writeFolderEntry(workspaceId, addMember(entry, await memberWorkspaceFor(workspaceId, path)))
+        const { member, created } = await memberWorkspaceFor(workspaceId, path)
+        const ok = await editFolderEntry(workspaceId, (current) => (
+          isDuplicate(current) ? current : addMember(current, member)
+        ))
+        if (!ok) await undoCreatedMember(member, created)
         return
       }
-      writeFolderEntry(workspaceId, addFolder(entry, path))
+      await editFolderEntry(workspaceId, (current) => (
+        isDuplicate(current) ? current : addFolder(current, path)
+      ))
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : String(reason)
       notifyFolder(`${t('folder.addError')}: ${detail}`)
@@ -901,28 +1013,47 @@ export function GroupsBrowser({
     if (owner === undefined) return false
     setFoldersBusy(true)
     try {
-      const created = await createRemoteFolder(profileId, remotePath)
-      if (created.workspaceId === (workspaceId as string)) throw new Error(t('folder.duplicate'))
-      const entry = entryFor(foldersDoc, workspaceId as string)
-      if (effectiveFolders(owner.path, entry).some(folder => samePath(folder, created.path))) {
-        throw new Error(t('folder.duplicate'))
+      const key = `${workspaceId as string}|${profileId}|${remotePath}`
+      const pending = createdRemotePendingSave.current
+      const existingEntry = entryFor(foldersDocRef.current, workspaceId as string)
+      // Reject a duplicate before asking the SSH plugin to create anything:
+      // an already-registered remote root, or a retry from a failed overlay save.
+      const alreadyRegistered = (existingEntry?.members ?? []).some(member => (
+        member.kind === 'remote' && member.profileId === profileId && member.remotePath === remotePath
+      ))
+      if (alreadyRegistered || (pending?.key === key
+        && effectiveFolders(owner.path, existingEntry).some(folder => samePath(folder, pending.member.path)))) {
+        notifyFolder(t('folder.duplicate'))
+        createdRemotePendingSave.current = null
+        return false
       }
-      const member: FolderMember = {
-        path: created.path,
-        workspaceId: created.workspaceId,
-        kind: 'remote',
-        remotePath: created.remotePath,
-        profileId: created.profileId,
-        title: created.title,
-        ...(created.recordId === '' ? {} : { recordId: created.recordId }),
+      let member: FolderMember
+      if (pending?.key === key) {
+        // The SSH plugin already created the mirror last time; the overlay save
+        // failed then, so reuse it instead of creating a second remote folder.
+        member = pending.member
+      } else {
+        const created = await createRemoteFolder(profileId, remotePath)
+        if (created.workspaceId === (workspaceId as string)) throw new Error(t('folder.duplicate'))
+        member = {
+          path: created.path,
+          workspaceId: created.workspaceId,
+          kind: 'remote',
+          remotePath: created.remotePath,
+          profileId: created.profileId,
+          title: created.title,
+          ...(created.recordId === '' ? {} : { recordId: created.recordId }),
+        }
       }
-      const next: FoldersDocument = {
-        version: 1,
-        workspaces: { ...foldersDoc.workspaces, [workspaceId]: addMember(entry, member) },
-      }
-      // Like the subpath field: report success only once the overlay is durable.
-      await saveFolders(next)
-      setFoldersDoc(next)
+      // Keep the pending record until the overlay write is durable: a failed
+      // save must not leave an untracked native workspace behind on retry.
+      createdRemotePendingSave.current = { key, member }
+      const ok = await editFolderEntry(workspaceId, (current) => {
+        if (effectiveFolders(owner.path, current).some(folder => samePath(folder, member.path))) return current
+        return addMember(current, member)
+      })
+      if (!ok) return false
+      createdRemotePendingSave.current = null
       return true
     } catch (reason) {
       notifyFolder(`${t('folder.addError')}: ${reason instanceof Error ? reason.message : String(reason)}`)
@@ -944,13 +1075,16 @@ export function GroupsBrowser({
       const created = pending?.workspaceId === workspaceId && pending.name === name
         ? pending
         : await createWorkspaceDirectory(workspace.path, name, foldersRemoteBase, createDirectory)
-      createdFolderPendingSave.current = { workspaceId, name, path: created.path }
-      const entry = addFolder(entryFor(foldersDoc, workspaceId as string), created.path)
-      const next: FoldersDocument = { version: 1, workspaces: { ...foldersDoc.workspaces, [workspaceId]: entry } }
       // Do not report success or clear the input until both operations succeed.
-      // A failed overlay save does NOT delete the newly created user directory.
-      await saveFolders(next)
-      setFoldersDoc(next)
+      // A failed overlay save does NOT delete the newly created user directory;
+      // keeping the pending record lets a retry reuse it instead of mkdir twice.
+      createdFolderPendingSave.current = { workspaceId, name, path: created.path }
+      const ok = await editFolderEntry(workspaceId, (current) => (
+        effectiveFolders(workspace.path, current).some(folder => samePath(folder, created.path))
+          ? current
+          : addFolder(current, created.path)
+      ))
+      if (!ok) return false
       createdFolderPendingSave.current = null
       return true
     } catch (reason) {
@@ -962,11 +1096,11 @@ export function GroupsBrowser({
   }
 
   const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {
-    writeFolderEntry(workspaceId, setRoot(entryFor(foldersDoc, workspaceId as string), path))
+    void editFolderEntry(workspaceId, (current) => setRoot(current, path))
   }
 
   const removeFolderFrom = (workspaceId: WorkspaceId, path: string): void => {
-    writeFolderEntry(workspaceId, removeFolder(entryFor(foldersDoc, workspaceId as string), path))
+    void editFolderEntry(workspaceId, (current) => removeFolder(current, path))
   }
 
   /**
@@ -989,7 +1123,7 @@ export function GroupsBrowser({
     void (async () => {
       const workspace = workspaces.find(w => w.workspaceId === workspaceId)
       if (!workspace) throw new Error('Workspace not found')
-      const member = memberOf(entryFor(foldersDoc, workspaceId as string), path)
+      const member = memberOf(entryFor(foldersDocRef.current, workspaceId as string), path)
       if (member !== undefined) {
         // The member's own workspace is what runs the session; if the user deleted
         // it outside this overlay, say so instead of failing inside the platform.
@@ -1005,9 +1139,14 @@ export function GroupsBrowser({
       // this project's root — so the agent would open the folder and see nothing.
       // Register the member now and run the session inside it.
       if (!isUnderBase(path, workspace.path)) {
-        const entry = entryFor(foldersDoc, workspaceId as string)
-        const attached = await memberWorkspaceFor(workspaceId, path)
-        writeFolderEntry(workspaceId, addMember(entry, attached))
+        const { member: attached, created } = await memberWorkspaceFor(workspaceId, path)
+        // A session must NEVER be created until the overlay is durable: the
+        // member's own workspace is the only thing that makes it addressable.
+        const ok = await editFolderEntry(workspaceId, (current) => addMember(current, attached))
+        if (!ok) {
+          await undoCreatedMember(attached, created)
+          throw new Error(t('folder.saveError'))
+        }
         await createSessionIn(attached.workspaceId as WorkspaceId)
         return
       }
@@ -2022,6 +2161,13 @@ export function GroupsBrowser({
             profiles={remoteProfiles}
             profilesError={remoteProfilesError}
             knownWorkspaceIds={workspaces.map(w => w.workspaceId as string)}
+            blockedReason={foldersLoadError !== null
+              ? `${t('folder.loadError')}: ${foldersLoadError}`
+              : foldersSchemaWarning}
+            warnings={[
+              ...(foldersRemoteBaseWarning === null ? [] : [foldersRemoteBaseWarning]),
+            ]}
+            onReload={reloadFolders}
             onAddFolder={() => { void addFolderTo(foldersTarget) }}
             onAddRemote={(profileId, remotePath) => addRemoteFolderTo(foldersTarget, profileId, remotePath)}
             onAddSubpath={(relative) => addSubpathTo(foldersTarget, relative)}

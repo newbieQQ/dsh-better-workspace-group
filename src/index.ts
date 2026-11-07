@@ -13,10 +13,14 @@
  *   (manual groups + per-workspace overrides). Validated against the current
  *   rule categories, written atomically to the plugin-owned JSON sidecar.
  * - `GET /workspace-groups/folders` — the per-workspace extra-folder overlay
- *   plus each workspace's root folder.
+ *   plus each workspace's root folder, a `revision` (ETag) and remote-mirror
+ *   diagnostics. A read/parse failure is a 500, never an empty document.
  * - `PUT /workspace-groups/folders` — replace the folder overlay whole.
- *   Strictly validated (absolute paths, no duplicates, root membership) and
- *   written atomically; the saved document is echoed back.
+ *   Strictly validated (absolute paths, no duplicates, root membership,
+ *   remote-mirror containment), guarded by `If-Match: <revision>` and written
+ *   atomically under a serialized compare-and-swap. A stale revision returns
+ *   409 with the current document; the accepted document and new revision are
+ *   echoed back.
  * - `POST /workspace-groups/folders` — deprecated; returns 410 without reading
  *   the payload or touching remote-ssh records.
  *
@@ -46,12 +50,14 @@ import {
 } from './host-tabs.ts'
 import {
   defaultFoldersPath,
-  defaultRemoteMirrorBase,
   hasRemoteMarkerHint,
-  readFoldersDocument,
+  readFoldersState,
+  remoteMirrorBaseDiagnostic,
+  replaceFoldersDocument,
   validateFoldersDocument,
   validateRemoteHintPath,
-  writeFoldersDocument,
+  type FoldersState,
+  type RemoteMirrorBaseDiagnostic,
 } from './host-folders.ts'
 
 /** Plugin identity for cordis.yml rows. */
@@ -60,8 +66,19 @@ export const name = 'workspace-groups-local'
 /** Services required before mounting: the webserver route. */
 export const inject = ['webServer']
 
-/** Cap on the PUT body: the overlay is tiny; anything bigger is a client bug. */
+/** Cap on the manual/tabs PUT body: those overlays are tiny. */
 const MAX_MANUAL_BODY_BYTES = 64 * 1024
+
+/**
+ * Cap on the folder PUT body.
+ *
+ * This must NOT reuse `MAX_MANUAL_BODY_BYTES`: the folder validator allows up
+ * to 32 folders and 16 members per workspace, each with up to 1024-character
+ * paths, so a single perfectly legal workspace can exceed 64 KiB. A 64 KiB cap
+ * meant that once a document grew past it, every further edit returned 413 and
+ * the overlay became un-editable. 1 MiB is still a hard bound against abuse.
+ */
+const MAX_FOLDERS_BODY_BYTES = 1024 * 1024
 
 /** Error with an HTTP status, mapped to a plain-text 4xx/5xx response. */
 class HttpError extends Error {
@@ -116,6 +133,51 @@ async function readBody(req: IncomingMessage, limit: number): Promise<string> {
   }
   if (chunks.length === 0) throw new HttpError(400, 'empty request body')
   return Buffer.concat(chunks).toString('utf8')
+}
+
+/**
+ * The one response envelope shared by GET, PUT echo and 409.
+ *
+ * GET and PUT used to disagree: GET added `remoteBase`, PUT echoed only the
+ * document. A client that replaced its state with the PUT response lost
+ * `remoteBase` until the next reload. Both now carry the same diagnostics plus
+ * the exact revision, so the client can render what the host accepted AND keep
+ * its optimistic-concurrency token.
+ */
+function foldersEnvelope(
+  state: FoldersState,
+  diagnostic: RemoteMirrorBaseDiagnostic,
+  revision = state.revision,
+): Record<string, unknown> {
+  return {
+    ...state.document,
+    remoteBase: diagnostic.base,
+    ...(diagnostic.warning === undefined ? {} : { remoteBaseWarning: diagnostic.warning }),
+    ...(state.schemaWarning === undefined ? {} : { schemaWarning: state.schemaWarning }),
+    revision,
+  }
+}
+
+/** Turn an HTTP If-Match value (possibly quoted / weak) into a bare revision. */
+function normalizeEtag(value: string): string {
+  return value.trim().replace(/^W\//u, '').replace(/^"|"$/gu, '')
+}
+
+/** Send a JSON folder envelope with the standard no-store headers. */
+function sendFolders(
+  res: ServerResponse,
+  status: number,
+  body: string,
+  revision: string,
+  method?: string,
+): void {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'ETag': `"${revision}"`,
+    'Content-Length': Buffer.byteLength(body),
+  })
+  res.end(method === 'HEAD' ? undefined : body)
 }
 
 /** Plugin body: mount the config snapshot route and the overlay write route. */
@@ -289,18 +351,19 @@ export function apply(ctx: GroupsContext): void {
     path: '/workspace-groups/folders',
     handler: async (req, res) => {
       if (req.method === 'GET' || req.method === 'HEAD') {
-        // The reader is tolerant by construction (a missing or torn sidecar is
-        // the empty document), so it cannot fail a GET. `remoteBase` rides along
-        // so the browser knows which projects are remote-ssh mirrors and must
-        // only accept subdirectories of their own mirror as extra folders.
-        const document = await readFoldersDocument(foldersPath)
-        const body = JSON.stringify({ ...document, remoteBase: defaultRemoteMirrorBase() })
-        res.writeHead(200, {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Cache-Control': 'no-store',
-          'Content-Length': Buffer.byteLength(body),
-        })
-        res.end(req.method === 'HEAD' ? undefined : body)
+        // A read failure is an ERROR, never an empty document. The old reader
+        // swallowed EACCES / EISDIR / EBUSY / torn JSON and returned 200 + {},
+        // which the browser then PUT back, erasing every workspace's folders.
+        // `revision` is the ETag that PUT must echo in If-Match.
+        let state: FoldersState
+        try {
+          state = await readFoldersState(foldersPath)
+        } catch (error) {
+          writeError(res, 500, `workspace-groups: cannot read folder overlay: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const diagnostic = remoteMirrorBaseDiagnostic()
+        sendFolders(res, 200, JSON.stringify(foldersEnvelope(state, diagnostic)), state.revision, req.method)
         return
       }
       if (req.method === 'POST') {
@@ -315,34 +378,47 @@ export function apply(ctx: GroupsContext): void {
       }
       let raw: unknown
       try {
-        raw = JSON.parse(await readBody(req, MAX_MANUAL_BODY_BYTES))
+        raw = JSON.parse(await readBody(req, MAX_FOLDERS_BODY_BYTES))
       } catch (error) {
         const status = error instanceof HttpError ? error.status : 400
         writeError(res, status, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
+      const diagnostic = remoteMirrorBaseDiagnostic()
       let document
       try {
-        document = validateFoldersDocument(raw)
+        // The host is the final trust boundary: remote members must stay inside
+        // the mirror base, not just in the browser's own checks.
+        document = validateFoldersDocument(raw, diagnostic.base)
       } catch (error) {
         writeError(res, 400, `workspace-groups: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
+      const ifMatch = req.headers?.['if-match']
+      const expectedRevision = typeof ifMatch === 'string' ? normalizeEtag(ifMatch) : undefined
+      let result
       try {
-        await writeFoldersDocument(foldersPath, document)
+        // Serialized read -> compare -> write. A concurrent second writer either
+        // wins first and this one sees a changed revision (409), or waits.
+        result = await replaceFoldersDocument(foldersPath, expectedRevision, document)
       } catch (error) {
         writeError(res, 500, `workspace-groups: failed to write folder overlay: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
-      // Echo the normalized document: the client renders exactly what the host
-      // accepted, not its own (possibly trimmed) guess.
-      const body = JSON.stringify(document)
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'Content-Length': Buffer.byteLength(body),
-      })
-      res.end(body)
+      if (!result.ok) {
+        // 409 carries the CURRENT server document so the client can reload and
+        // re-apply its change instead of silently overwriting it.
+        const body = JSON.stringify(foldersEnvelope(result.state, diagnostic))
+        sendFolders(res, 409, body, result.state.revision)
+        return
+      }
+      // Echo the normalized document AND the new revision: the client renders
+      // exactly what the host accepted and chains the next write from it.
+      const body = JSON.stringify(foldersEnvelope(
+        { document, revision: result.revision, missing: false },
+        diagnostic,
+      ))
+      sendFolders(res, 200, body, result.revision)
     },
   }), '@dsh-xhl/workspace-groups: /workspace-groups/folders route')
 }

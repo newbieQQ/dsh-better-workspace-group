@@ -2,6 +2,14 @@ node_modules/
 *.log
 .DS_Store
 
-# 开发工程文件：docs 五级文档框架不进项目 git 仓库
-docs/
+# Build / test byproducts. The published client bundle must NOT ship a
+# sourcemap: tsdown now builds with sourcemap:false (see tsdown.config.ts).
+*.map
+*.tsbuildinfo
+dist/
+coverage/
+tools/_tmp/
+
+# Local-only agent instructions. Project design docs under docs/ ARE tracked:
+# remote-ssh-integration-plan.md documents the two open task-board cards.
 AGENTS.md

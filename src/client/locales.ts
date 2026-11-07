@@ -51,6 +51,14 @@ export type WorkspaceGroupsKey =
   | 'folder.addError'
   | 'folder.sessionError'
   | 'folder.saveError'
+  | 'folder.loadError'
+  | 'folder.conflict'
+  | 'folder.retry'
+  | 'folder.reload'
+  | 'folder.addKind'
+  | 'folder.addKindSubfolder'
+  | 'folder.addKindWorkspace'
+  | 'folder.cloudNoteSubfolder'
   | 'folder.notReady'
   | 'folder.remoteSessionUnsupported'
   | 'folder.remoteHint'
@@ -230,6 +238,14 @@ export const zh: WorkspaceGroupsDict = {
   'folder.addError': '添加文件夹失败',
   'folder.sessionError': '新建会话失败',
   'folder.saveError': '文件夹保存失败',
+  'folder.loadError': '无法读取文件夹配置，已暂时禁用编辑以免覆盖其它工作区',
+  'folder.conflict': '文件夹配置已被另一个窗口更新，已载入最新版本。',
+  'folder.retry': '请确认后重试刚才的操作。',
+  'folder.reload': '重新加载',
+  'folder.addKind': '云端添加方式',
+  'folder.addKindSubfolder': '本项目子目录',
+  'folder.addKindWorkspace': '独立云端工作区',
+  'folder.cloudNoteSubfolder': '会在项目云端根目录下新建该目录并挂进来；不会注册第二个镜像工作区',
   'folder.notReady': '目录安全信息尚未加载，请重启 DSH 并刷新页面后重试',
   'folder.remoteSessionUnsupported': '当前 SSH 插件不完整支持子目录会话，请从远程工作区根目录打开会话。不会退回本地终端。',
   'folder.remoteHint': '输入一个文件夹名：本地使用 DSH 目录接口；远程使用 SSH 创建目录接口（远端同名目录已存在时复用）。SSH 不可用时不会在镜像里创建本地目录。',
@@ -408,6 +424,14 @@ export const en: WorkspaceGroupsDict = {
   'folder.addError': 'Could not add the folder',
   'folder.sessionError': 'Could not start a session',
   'folder.saveError': 'Could not save folders',
+  'folder.loadError': 'Could not read the folder overlay. Editing is disabled so a failed read cannot overwrite every other workspace.',
+  'folder.conflict': 'Another window updated the folder overlay; the newest version has been loaded.',
+  'folder.retry': 'Please check it and retry the operation.',
+  'folder.reload': 'Reload',
+  'folder.addKind': 'Cloud add mode',
+  'folder.addKindSubfolder': 'Subfolder of this project',
+  'folder.addKindWorkspace': 'Standalone cloud workspace',
+  'folder.cloudNoteSubfolder': 'Creates that directory under this project’s remote root and attaches it; no second mirror workspace is registered',
   'folder.notReady': 'Directory safety information is not loaded. Restart DSH and refresh the page before retrying.',
   'folder.remoteSessionUnsupported': 'This SSH plugin does not fully support subdirectory sessions. Start from the remote workspace root instead; no local terminal fallback is allowed.',
   'folder.remoteHint': 'Enter one folder name. Local workspaces use DSH; remote workspaces use SSH mkdir (existing remote directories are reused). Missing SSH never falls back to a local mirror write.',

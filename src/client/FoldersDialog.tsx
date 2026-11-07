@@ -24,6 +24,7 @@ import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/cl
 import { effectiveFolders, memberOf, rootOf, samePath, type WorkspaceFolderEntry } from '../core/folders.ts'
 import type { GroupsBrowserProps } from './contract.ts'
 import { folderLabel } from './tree.ts'
+import { subfolderOf } from './remote-paths.ts'
 import {
   listRemoteDirectory,
   remoteDirJoin,
@@ -34,17 +35,10 @@ import {
 
 /** Which kind of folder the add area currently offers. */
 type AddMode = 'local' | 'cloud'
+/** What a typed value in the cloud field means. Explicit, never inferred. */
+type AddKind = 'subfolder' | 'workspace'
 
-/** Relative path of `picked` inside `root`: '' for the root itself, null outside. */
-function subfolderOf(root: string | null, picked: string): string | null {
-  if (root === null) return null
-  const base = root.trim().replace(/\/+$/u, '')
-  if (base === '') return null
-  if (picked === base) return ''
-  return picked.startsWith(`${base}/`) ? picked.slice(base.length + 1) : null
-}
-
-export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, onClose, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
+export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, blockedReason, warnings, onReload, onClose, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
   workspace: WorkspaceView
   entry: WorkspaceFolderEntry | undefined
   t: GroupsBrowserProps['t']
@@ -52,13 +46,18 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
   canOpen: boolean
   /** Remote (mirror-backed) workspace: extra folders can also be typed subpaths. */
   remote: boolean
-  /** Remote root of a cloud owner, so a browsed subdirectory joins as a subfolder. */
+  /** Absolute remote root of a cloud owner, so a browsed child joins as a subfolder. */
   ownerRemotePath: string | null
   /** SSH connections, `null` while loading or when the remote-ssh plugin is absent. */
   profiles: readonly RemoteProfileSummary[] | null
   profilesError: string | null
   /** Live workspace ids, so a member whose workspace is gone can say so. */
   knownWorkspaceIds: readonly string[]
+  /** Non-null when the overlay could not be read or has an unknown schema: editing is disabled. */
+  blockedReason: string | null
+  /** Non-fatal host diagnostics (e.g. a mismatched remote mirror base). */
+  warnings: readonly string[]
+  onReload: () => void
   onClose: () => void
   /** Pick any directory (local or an already-mirrored cloud folder). */
   onAddFolder: () => void
@@ -72,6 +71,9 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
   const folders = effectiveFolders(workspace.path, entry)
   const root = rootOf(workspace.path, entry)
   const [addMode, setAddMode] = useState<AddMode>('local')
+  // An explicit choice replaces the old "bare name vs. path with a slash"
+  // guess, which turned a browsed subdirectory into a second cloud workspace.
+  const [addKind, setAddKind] = useState<AddKind>(remote ? 'subfolder' : 'workspace')
   const [profileId, setProfileId] = useState('')
   const [remotePath, setRemotePath] = useState('')
   const [browsing, setBrowsing] = useState(false)
@@ -82,14 +84,11 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
     ? profileId
     : (profileChoices[0]?.id ?? '')
   const currentProfile = profileChoices.find(profile => profile.id === selectedProfile)
-  /** One field, two shapes: a bare name creates a subdirectory inside THIS
-   *  project's remote root, anything with a separator registers a new cloud
-   *  workspace. Keeping them in one field removed a whole extra row from a
-   *  ~330px wide dialog. */
   const typed = remotePath.trim()
-  const asSubfolder = remote && typed !== '' && !/[/\\~]/u.test(typed)
+  const asSubfolder = remote && addKind === 'subfolder'
+  const editBlocked = blockedReason !== null
   const submitAdd = (): void => {
-    if (typed === '' || busy) return
+    if (typed === '' || busy || editBlocked) return
     if (asSubfolder) {
       void onAddSubpath(typed).then(success => { if (success) setRemotePath('') })
       return
@@ -108,7 +107,7 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
         profile={currentProfile}
         startPath={remotePath.trim() === '' ? (ownerRemotePath ?? currentProfile.remoteRoot) : remotePath.trim()}
         t={t}
-        busy={busy}
+        busy={busy || editBlocked}
         onPick={(picked) => {
           const relative = subfolderOf(ownerRemotePath, picked)
           if (relative === '' && ownerRemotePath !== null) {
@@ -127,6 +126,9 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
             })
             return
           }
+          // Outside the owner's root: genuinely a separate cloud workspace.
+          // Make the intent explicit so the typed field is never ambiguous.
+          setAddKind('workspace')
           setRemotePath(picked)
           setBrowsing(false)
         }}
@@ -155,6 +157,16 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
           <span className="wgFolderHeadName" title={workspace.title}>{workspace.title}</span>
           <code className="wgFolderHeadPath" title={ownerPath}>{ownerPath}</code>
         </header>
+
+        {blockedReason !== null && (
+          <div className="wgFolderNote" role="alert" data-tone="danger">
+            <p>{blockedReason}</p>
+            <Button variant="outline" onClick={onReload}>{t('folder.reload')}</Button>
+          </div>
+        )}
+        {warnings.map((warning, index) => (
+          <p key={index} className="wgFolderNote" role="status">{warning}</p>
+        ))}
 
         <section className="wgFolderSection">
           <div className="wgFolderSectionTitle">{t('folder.sectionList')}</div>
@@ -186,6 +198,7 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                       className="wgFolderRadio"
                       name="wg-folder-root"
                       checked={isRoot}
+                      disabled={editBlocked}
                       aria-label={`${t('folder.rootBadge')} ${label}`}
                       onChange={() => { onSetRoot(path) }}
                     />
@@ -221,6 +234,7 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                       <button
                         type="button"
                         className="wgIconButton"
+                        disabled={editBlocked}
                         aria-label={`${t('folder.remove')} ${label}`}
                         onClick={() => { onRemove(path) }}
                       >
@@ -266,7 +280,7 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                 <div className="wgFolderLocalPane">
                   {/* Full width, own line: the action used to share a row with the
                       consequence text and the label wrapped onto two lines. */}
-                  <button type="button" className="wgFolderPick" disabled={busy} onClick={onAddFolder}>
+                  <button type="button" className="wgFolderPick" disabled={busy || editBlocked} onClick={onAddFolder}>
                     <span className="wgFolderPickPlus" aria-hidden>＋</span>
                     <span>{t('folder.pickLocal')}</span>
                   </button>
@@ -279,6 +293,28 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                       profile select, a path field and a labelled button cannot share
                       a row without squeezing one of them. Browsing therefore docks
                       into the path field as an icon instead of its own button. */}
+                  {remote && (
+                    <div className="wgFolderSegmented" role="radiogroup" aria-label={t('folder.addKind')}>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={addKind === 'subfolder'}
+                        className="wgFolderTab"
+                        onClick={() => { setAddKind('subfolder'); setNotice(null) }}
+                      >
+                        {t('folder.addKindSubfolder')}
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={addKind === 'workspace'}
+                        className="wgFolderTab"
+                        onClick={() => { setAddKind('workspace'); setNotice(null) }}
+                      >
+                        {t('folder.addKindWorkspace')}
+                      </button>
+                    </div>
+                  )}
                   <div className="wgFolderStack">
                     {profileChoices.length === 0
                       ? <p className="wgFolderNote">{t('folder.noProfiles')}</p>
@@ -287,7 +323,7 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                             className="wgFolderSubpathInput wgFolderSelect"
                             value={selectedProfile}
                             aria-label={t('folder.profileLabel')}
-                            disabled={busy}
+                            disabled={busy || editBlocked}
                             onChange={event => setProfileId(event.target.value)}
                           >
                             {profileChoices.map(profile => (
@@ -302,9 +338,9 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                         type="text"
                         className="wgFolderSubpathInput wgFolderFieldInput"
                         value={remotePath}
-                        placeholder={t(remote ? 'folder.remotePathOrName' : 'folder.remotePathPlaceholder')}
-                        aria-label={t(remote ? 'folder.remotePathOrName' : 'folder.remotePathLabel')}
-                        disabled={busy}
+                        placeholder={t(asSubfolder ? 'folder.subpathPlaceholder' : 'folder.remotePathPlaceholder')}
+                        aria-label={t(asSubfolder ? 'folder.subpathLabel' : 'folder.remotePathLabel')}
+                        disabled={busy || editBlocked}
                         onChange={event => setRemotePath(event.target.value)}
                         onKeyDown={(event) => {
                           if (event.key !== 'Enter') return
@@ -317,7 +353,7 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                         className="wgFolderFieldAction"
                         title={t('folder.browse')}
                         aria-label={t('folder.browse')}
-                        disabled={busy || currentProfile === undefined}
+                        disabled={busy || editBlocked || currentProfile === undefined}
                         onClick={() => { setBrowsing(true) }}
                       >
                         <IconFolderOpenOutlineRegular size={15} />
@@ -326,14 +362,14 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
                     <div className="wgFolderActions">
                       <Button
                         variant="primary"
-                        disabled={busy || typed === '' || (!asSubfolder && selectedProfile === '')}
+                        disabled={busy || editBlocked || typed === '' || (!asSubfolder && selectedProfile === '')}
                         onClick={submitAdd}
                       >
                         {t(asSubfolder ? 'folder.createAndAdd' : 'folder.addRemote')}
                       </Button>
                     </div>
                   </div>
-                  <p className="wgFolderHint">{t(remote ? 'folder.cloudNoteBoth' : 'folder.cloudNote')}</p>
+                  <p className="wgFolderHint">{t(asSubfolder ? 'folder.cloudNoteSubfolder' : 'folder.cloudNote')}</p>
                 </>
               )}
           {profilesError !== null && (

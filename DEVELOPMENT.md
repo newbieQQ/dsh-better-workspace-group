@@ -162,12 +162,25 @@ $installed = "C:\Users\qyh15\.dsh\profiles\desktop\node_modules\@dsh-xhl\workspa
 
 ## 6. 已知坑
 
-- **沙箱内跑不了 vitest**：`spawn` 被 DSH 沙箱拦（EPERM），在普通 PowerShell 终端里跑。
+- **沙箱内跑不了 vitest**：`spawn` 被 DSH 沙箱拦（EPERM）；需 `danger-full-access`
+  或在普通 PowerShell 终端里跑。pnpm 的 hoisted 布局偶尔缺 `@vitest/*` 顶层链接，
+  这时用 `node_modules/.pnpm/vitest@*/node_modules/vitest/vitest.mjs` 加一个不 import
+  `vitest/config` 的纯 JS 配置即可绕过。
 - **`node_modules/.bin/*.CMD` 直调会挂**：pnpm 里嵌套的 pnpm 脚本在 DSH 沙箱下会
-  `Could not determine executable`，统一用 `node <pnpm.cjs> <script>` 形式。
-- **单测覆盖不齐**：`tests/` 是早期版本写的，现已补 `tests/tabs.test.ts`（标签条纯逻辑：
-  固定区不变量、拖动夹紧、关闭其他/右侧、持久化恢复）；**快切面板
-  （`quick.ts` / `QuickPanel.tsx`）与分组外观仍无单测**，改到这些区域时补。
+  `Could not determine executable`，统一用 `node <pnpm.cjs> <script>` 形式；跑 build/test
+  前先把 `.../dependencies/node/bin` 加进 PATH，否则脚本里的 `node` 找不到。
+- **`lib/` 是实际被加载的产物**：改完 `src/` 必须 `pnpm build`。`tsdown.config.ts`
+  已关闭客户端 sourcemap，发布包不再内嵌完整 TS 源码。
+- **单测覆盖**：`tests/` 现含 `tabs.test.ts`（标签条）、`folders.test.ts`（纯逻辑/宿主校验）、
+  `folders-cas.test.ts`（HTTP 500/409/CAS/未知 schema/路径归一）、
+  `folders-persist.test.ts`（客户端 fail-closed 与 If-Match）、
+  `remote-paths.test.ts`（别名 vs 绝对路径）。**快切面板（`quick.ts` /
+  `QuickPanel.tsx`）与分组外观仍无单测**，改到这些区域时补。
+- **文件夹 overlay 是 CAS 协议，不再是「全量 GET → 改 → 全量 PUT」**：host GET 返回
+  `revision` + `ETag`，PUT 必须带 `If-Match`，不匹配回 409 + 服务端最新文档；读失败一律
+  500 且客户端禁用编辑。任何新增写路径都要走 `GroupsBrowser.tsx` 的
+  `editFolderEntry` 队列（串行、乐观更新、失败回滚、冲突重载），**不要直接调 `saveFolders`**；
+  新建原生/远程工作区的副作用必须等 overlay 落盘成功才算完成，失败要补偿或 pending 复用。
 - **改持久化格式一律「严格写、宽容读」**：新增字段必须是可选的，旧文件读不进来不算
   错；悬挂键（如已删除的分类/会话）不得拒写，否则用户会卡在 400 上再也保存不了；
   新字段在 `restore*` 里必须原样带过去（`pinned`/`title` 漏带就等于重启丢配置）。

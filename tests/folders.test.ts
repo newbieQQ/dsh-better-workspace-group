@@ -52,9 +52,10 @@ describe('deprecated remote marker route', () => {
       } as unknown as GroupsContext)
       const route = routes.find(item => item.path === '/workspace-groups/folders')!
       expect(route).toBeDefined()
-      const request = async (method: string, body?: string) => {
+      const request = async (method: string, body?: string, headers: Record<string, string> = {}) => {
         const req = Readable.from(body === undefined ? [] : [body]) as IncomingMessage
         req.method = method
+        req.headers = headers
         let status = 0
         let text: string | undefined
         await route.handler(req, {
@@ -85,10 +86,16 @@ describe('deprecated remote marker route', () => {
       expect(await readFile(join(existing, '.remote-ssh.json'), 'utf8')).toBe(childMarker)
       expect(await readdir(home)).toEqual(['mirror'])
       const document = { version: 1, workspaces: { test: { folders: [existing] } } }
-      expect((await request('PUT', JSON.stringify(document))).status).toBe(200)
+      const put = await request('PUT', JSON.stringify(document))
+      expect(put.status).toBe(200)
+      const accepted = JSON.parse(put.text!) as Record<string, unknown>
+      expect(accepted).toMatchObject(document)
+      expect(typeof accepted.revision).toBe('string')
       const response = await request('GET')
       expect(response.status).toBe(200)
-      expect(JSON.parse(response.text!)).toEqual({ ...document, remoteBase: hostFolders.defaultRemoteMirrorBase() })
+      const served = JSON.parse(response.text!) as Record<string, unknown>
+      expect(served).toMatchObject({ ...document, remoteBase: hostFolders.defaultRemoteMirrorBase() })
+      expect(served.revision).toBe(accepted.revision)
 
       const hintRoute = routes.find(item => item.path === '/workspace-groups/remote-hint')!
       expect(hintRoute).toBeDefined()

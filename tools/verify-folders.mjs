@@ -239,7 +239,11 @@ check(!('readRemoteMarker' in host), 'no remote connection record reader remains
     equal((await request('PUT', JSON.stringify(document))).status, 200, 'normal folder PUT remains available')
     const response = await request('GET')
     equal(response.status, 200, 'normal folder GET remains available')
-    equal(JSON.parse(response.text), { ...document, remoteBase: defaultRemoteMirrorBase() }, 'GET preserves saved folders and remote mirror base')
+    const getBody = JSON.parse(response.text)
+    equal(getBody.version, 1, 'GET keeps the schema version')
+    equal(JSON.stringify(getBody.workspaces), JSON.stringify(document.workspaces), 'GET preserves saved folders')
+    equal(getBody.remoteBase, defaultRemoteMirrorBase(), 'GET reports the remote mirror base')
+    check(/^[0-9a-f]{16}$/u.test(getBody.revision ?? ''), 'GET reports a revision for optimistic concurrency')
 
     const hintRoute = routes.find(item => item.path === '/workspace-groups/remote-hint')
     check(hintRoute !== undefined, 'remote hint route is registered')

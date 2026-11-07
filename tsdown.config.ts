@@ -112,7 +112,10 @@ function clientConfig(): UserConfig {
     format: 'cjs',
     platform: 'browser',
     target: 'es2022',
-    sourcemap: true,
+    // The browser bundle used to ship `lib/client.js.map` with full
+    // `sourcesContent`: the entire TypeScript source went out inside the npm
+    // package. Plugin users never need a client sourcemap, so do not emit it.
+    sourcemap: false,
     dts: false,
     clean: false,
     deps: {
