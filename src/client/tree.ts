@@ -121,8 +121,10 @@ export interface WorkspaceGroupNode {
   sessions: readonly SessionNode[]
   /**
    * Folder rows, present only when the workspace carries at least one extra
-   * folder: root first, then stored order, base included. Absent means "this
-   * workspace has exactly one directory", the plain pre-folders node shape.
+   * folder: root first, then stored order. The base directory is never a row —
+   * it is the workspace row itself, and its sessions live in {@link sessions}.
+   * Absent means "this workspace has exactly one directory", the plain
+   * pre-folders node shape.
    */
   folders?: readonly FolderNode[]
 }
@@ -385,25 +387,24 @@ function applyFolders(
     if (bucket === undefined) byFolder.set(owner, [node])
     else bucket.push(node)
   }
-  const folderNode = (path: string, isBase: boolean): FolderNode => {
-    const owned = isBase ? base : (byFolder.get(path) ?? [])
+  const folderNode = (path: string): FolderNode => {
     return {
       path,
       label: labels.get(path) ?? folderLabel(path),
       isRoot: samePath(path, root),
       expanded: collapsedFolders === undefined || !collapsedFolders.has(folderKey(workspaceId, path)),
-      isBase,
+      // The base directory is the workspace row itself, so every row here is an
+      // extra folder: a mirror id must never be dressed up as one, and none of
+      // them can be removed from the workspace.
+      isBase: false,
       // Every owned session is kept on the node so the row's count stays honest
       // while the folder is collapsed; the RowGroup does the hiding.
-      sessions: owned,
+      sessions: byFolder.get(path) ?? [],
     }
   }
-  const folders: FolderNode[] = [
-    folderNode(workspacePath, true),
-    ...extras.map(path => folderNode(path, false)),
-  ]
+  const folders: FolderNode[] = extras.map(path => folderNode(path))
   // Root first, then stored order: moving the root row to the front keeps the
-  // remaining rows (base included) in their stored order.
+  // remaining rows in their stored order.
   const rootIndex = folders.findIndex(folder => folder.isRoot)
   if (rootIndex > 0) {
     const [rootFolder] = folders.splice(rootIndex, 1)

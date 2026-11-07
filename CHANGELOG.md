@@ -34,9 +34,16 @@
 - `parseFolderEntry` 允许缺 `folders` 字段（不再连带丢掉 members），`remoteSubpath` 与
   `joinSubpath` 对绝对/盘符/UNC 输入的判定统一；`joinSubpath` 额外拒绝 `C:foo`。
 
+### 侧栏文件夹行
+- 工作区自己的目录不再渲染成一条文件夹行。以前只要工作区挂了额外文件夹，它就会多出
+  一条以目录末段命名的行；云端工作区的路径是镜像目录，于是侧栏出现 `wmvl31c7ilkuc`
+  这样的内部 id，并且工作区自身的会话被藏进这条行里，看起来像「一个项目套在它自己里面」。
+- 现在只有真正额外挂进来的文件夹才有行，工作区自己的会话直接列在标题下方；没有额外
+  文件夹时节点形状与引入文件夹功能之前完全一致。
+
 ### 测试与工程
 - 新增 `tests/folders-cas.test.ts`、`tests/folders-persist.test.ts`、`tests/remote-paths.test.ts`
-  覆盖上述回归点；`tsc -p tsconfig.json` / `tsconfig.client.json` 与 288 个 vitest 用例全部通过。
+  覆盖上述回归点；`tsc -p tsconfig.json` / `tsconfig.client.json` 与 290 个 vitest 用例全部通过。
 - `tsdown.config.ts` 关闭客户端 sourcemap，`lib/client.js.map`（内嵌完整源码）已从构建产物移除；
   `.gitignore` 补 `*.map` / `*.tsbuildinfo` / `dist/` / `coverage/` / `tools/_tmp/`，并取消对
   `docs/` 的忽略，把 `remote-ssh-integration-plan.md` 纳入版本控制。

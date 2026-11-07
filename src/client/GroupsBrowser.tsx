@@ -2366,6 +2366,19 @@ function WorkspaceSubtree({ workspace, current, now, t, animate, onOpen, onSessi
       className="wgTreeChildren"
       animate={animate && folders.length + workspace.sessions.length <= ANIMATION_ROW_CAP}
     >
+      {workspace.sessions.map((session) => (
+        <SessionRow
+          key={session.id}
+          node={session}
+          currentId={current}
+          now={now}
+          t={t}
+          onOpen={onOpen}
+          onRename={onSessionRename}
+          onFork={onFork}
+          onArchive={onSessionArchive}
+        />
+      ))}
       {folders.map((folder) => {
         const key = folderKey(workspace.workspaceId, folder.path)
         return (
@@ -2673,6 +2686,19 @@ function SearchSubtree({ workspace, current, now, open, t }: {
   }
   return (
     <div role="group">
+      {workspace.sessions.map((session) => (
+        <SessionRow
+          key={session.id}
+          node={session}
+          currentId={current}
+          now={now}
+          t={t}
+          onOpen={open}
+          onRename={() => {}}
+          onFork={() => {}}
+          onArchive={() => {}}
+        />
+      ))}
       {folders.map((folder) => (
         <div key={folderKey(workspace.workspaceId, folder.path)} role="group">
           <FolderRow

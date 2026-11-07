@@ -75,8 +75,10 @@ export interface WorkspaceGroupNode {
     sessions: readonly SessionNode[];
     /**
      * Folder rows, present only when the workspace carries at least one extra
-     * folder: root first, then stored order, base included. Absent means "this
-     * workspace has exactly one directory", the plain pre-folders node shape.
+     * folder: root first, then stored order. The base directory is never a row —
+     * it is the workspace row itself, and its sessions live in {@link sessions}.
+     * Absent means "this workspace has exactly one directory", the plain
+     * pre-folders node shape.
      */
     folders?: readonly FolderNode[];
 }
