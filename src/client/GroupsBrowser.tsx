@@ -60,6 +60,7 @@ import { FoldersConflictError, loadFolders, saveFolders, type FoldersSnapshot } 
 import { createRemoteFolder, createWorkspaceDirectory, listRemoteDirectory, listRemoteProfiles, remoteFolderWorkspace, type RemoteFolderWorkspace, type RemoteProfileSummary } from './folder-directory.ts'
 import { fetchOpenInApps, folderAppId, openPathInApp } from './open-folder.ts'
 import { FoldersDialog } from './FoldersDialog.tsx'
+import { buildFarm } from './folders-farm.ts'
 import { QuickPanel } from './QuickPanel.tsx'
 import { SessionTabs } from './SessionTabs.tsx'
 import css from './styles.css?inline'
@@ -1097,6 +1098,34 @@ export function GroupsBrowser({
 
   const setFolderRoot = (workspaceId: WorkspaceId, path: string): void => {
     void editFolderEntry(workspaceId, (current) => setRoot(current, path))
+  }
+
+  /**
+   * Gather this project's folders into one link directory and register it as a
+   * workspace, so one session reaches all of them. The folders themselves are
+   * never copied, moved or deleted; the farm holds links only.
+   */
+  const buildFarmFor = async (workspaceId: WorkspaceId): Promise<void> => {
+    if (foldersBusy) return
+    const workspace = workspaces.find(w => w.workspaceId === workspaceId)
+    if (workspace === undefined) return
+    const folders = effectiveFolders(workspace.path, entryFor(foldersDocRef.current, workspaceId))
+    if (folders.length < 2) {
+      notifyFolder(t('folder.emptyHint'))
+      return
+    }
+    setFoldersBusy(true)
+    try {
+      const farm = await buildFarm(workspace.title, folders)
+      // Registering the farm is a separate step: a created directory without a
+      // workspace is harmless, and the error still names what already exists.
+      await createWorkspace({ path: farm.path })
+      notifyFolder(`${t('folder.mergeDone')} ${farm.path}`)
+    } catch (reason) {
+      notifyFolder(`${t('folder.mergeFailed')}: ${reason instanceof Error ? reason.message : String(reason)}`)
+    } finally {
+      setFoldersBusy(false)
+    }
   }
 
   const removeFolderFrom = (workspaceId: WorkspaceId, path: string): void => {
@@ -2168,6 +2197,7 @@ export function GroupsBrowser({
               ...(foldersRemoteBaseWarning === null ? [] : [foldersRemoteBaseWarning]),
             ]}
             onReload={reloadFolders}
+            onBuildFarm={() => { void buildFarmFor(foldersTarget) }}
             onAddFolder={() => { void addFolderTo(foldersTarget) }}
             onAddRemote={(profileId, remotePath) => addRemoteFolderTo(foldersTarget, profileId, remotePath)}
             onAddSubpath={(relative) => addSubpathTo(foldersTarget, relative)}

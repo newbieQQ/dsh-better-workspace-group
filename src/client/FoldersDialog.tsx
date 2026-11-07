@@ -38,7 +38,7 @@ type AddMode = 'local' | 'cloud'
 /** What a typed value in the cloud field means. Explicit, never inferred. */
 type AddKind = 'subfolder' | 'workspace'
 
-export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, blockedReason, warnings, onReload, onClose, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
+export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, blockedReason, warnings, onReload, onClose, onBuildFarm, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
   workspace: WorkspaceView
   entry: WorkspaceFolderEntry | undefined
   t: GroupsBrowserProps['t']
@@ -59,6 +59,11 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
   warnings: readonly string[]
   onReload: () => void
   onClose: () => void
+  /**
+   * Gather this project's folders into one link directory and register it as a
+   * workspace, so a single session can read and write all of them.
+   */
+  onBuildFarm: () => void
   /** Pick any directory (local or an already-mirrored cloud folder). */
   onAddFolder: () => void
   /** Register one cloud folder: returns true once it is stored. */
@@ -248,6 +253,20 @@ export function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, owne
           </div>
           {!extraFolders && <p className="wgFolderEmpty">{t('folder.emptyHint')}</p>}
         </section>
+
+        {extraFolders && (
+          <section className="wgFolderMerge">
+            <div className="wgFolderSectionTitle">{t('folder.mergeTitle')}</div>
+            {/* A session's file scope is its workspace directory, so folders in
+                different places are unreachable from one session. A farm puts
+                them side by side as links; nothing is copied or moved. */}
+            <button type="button" className="wgFolderPick" disabled={busy || editBlocked} onClick={onBuildFarm}>
+              <span className="wgFolderPickPlus" aria-hidden>⇄</span>
+              <span>{t('folder.mergeAction')}</span>
+            </button>
+            <p className="wgFolderHint">{t('folder.mergeHint')}</p>
+          </section>
+        )}
 
         <section className="wgFolderAdd">
           <div className="wgFolderSectionTitle">{t('folder.sectionAdd')}</div>

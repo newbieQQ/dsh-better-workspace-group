@@ -59,6 +59,11 @@ export type WorkspaceGroupsKey =
   | 'folder.addKindSubfolder'
   | 'folder.addKindWorkspace'
   | 'folder.cloudNoteSubfolder'
+  | 'folder.mergeTitle'
+  | 'folder.mergeAction'
+  | 'folder.mergeHint'
+  | 'folder.mergeDone'
+  | 'folder.mergeFailed'
   | 'folder.notReady'
   | 'folder.remoteSessionUnsupported'
   | 'folder.remoteHint'
@@ -246,6 +251,11 @@ export const zh: WorkspaceGroupsDict = {
   'folder.addKindSubfolder': '本项目子目录',
   'folder.addKindWorkspace': '独立云端工作区',
   'folder.cloudNoteSubfolder': '会在项目云端根目录下新建该目录并挂进来；不会注册第二个镜像工作区',
+  'folder.mergeTitle': '合并成一个总文件夹',
+  'folder.mergeAction': '生成总文件夹并添加为工作区',
+  'folder.mergeHint': '在旁边建一个目录，用链接把这些文件夹放进去，再注册成工作区。不复制、不移动原文件夹；之后在这个工作区里的会话可以同时读写它们。',
+  'folder.mergeDone': '已生成总文件夹：',
+  'folder.mergeFailed': '生成总文件夹失败',
   'folder.notReady': '目录安全信息尚未加载，请重启 DSH 并刷新页面后重试',
   'folder.remoteSessionUnsupported': '当前 SSH 插件不完整支持子目录会话，请从远程工作区根目录打开会话。不会退回本地终端。',
   'folder.remoteHint': '输入一个文件夹名：本地使用 DSH 目录接口；远程使用 SSH 创建目录接口（远端同名目录已存在时复用）。SSH 不可用时不会在镜像里创建本地目录。',
@@ -432,6 +442,11 @@ export const en: WorkspaceGroupsDict = {
   'folder.addKindSubfolder': 'Subfolder of this project',
   'folder.addKindWorkspace': 'Standalone cloud workspace',
   'folder.cloudNoteSubfolder': 'Creates that directory under this project’s remote root and attaches it; no second mirror workspace is registered',
+  'folder.mergeTitle': 'Merge into one folder',
+  'folder.mergeAction': 'Create the merged folder as a workspace',
+  'folder.mergeHint': 'Builds one directory that links these folders side by side and registers it as a workspace. Nothing is copied or moved; sessions in that workspace can read and write all of them.',
+  'folder.mergeDone': 'Merged folder created: ',
+  'folder.mergeFailed': 'Could not build the merged folder',
   'folder.notReady': 'Directory safety information is not loaded. Restart DSH and refresh the page before retrying.',
   'folder.remoteSessionUnsupported': 'This SSH plugin does not fully support subdirectory sessions. Start from the remote workspace root instead; no local terminal fallback is allowed.',
   'folder.remoteHint': 'Enter one folder name. Local workspaces use DSH; remote workspaces use SSH mkdir (existing remote directories are reused). Missing SSH never falls back to a local mirror write.',

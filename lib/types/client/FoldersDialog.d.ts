@@ -2,7 +2,7 @@ import type { WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/cl
 import { type WorkspaceFolderEntry } from '../core/folders.ts';
 import type { GroupsBrowserProps } from './contract.ts';
 import { type RemoteProfileSummary } from './folder-directory.ts';
-export declare function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, blockedReason, warnings, onReload, onClose, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
+export declare function FoldersDialog({ workspace, entry, t, busy, canOpen, remote, ownerRemotePath, profiles, profilesError, knownWorkspaceIds, blockedReason, warnings, onReload, onClose, onBuildFarm, onAddFolder, onAddRemote, onAddSubpath, onSetRoot, onRemove, onOpenFolder }: {
     workspace: WorkspaceView;
     entry: WorkspaceFolderEntry | undefined;
     t: GroupsBrowserProps['t'];
@@ -23,6 +23,11 @@ export declare function FoldersDialog({ workspace, entry, t, busy, canOpen, remo
     warnings: readonly string[];
     onReload: () => void;
     onClose: () => void;
+    /**
+     * Gather this project's folders into one link directory and register it as a
+     * workspace, so a single session can read and write all of them.
+     */
+    onBuildFarm: () => void;
     /** Pick any directory (local or an already-mirrored cloud folder). */
     onAddFolder: () => void;
     /** Register one cloud folder: returns true once it is stored. */
