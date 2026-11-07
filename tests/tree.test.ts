@@ -218,27 +218,16 @@ describe('deriveTopLevel', () => {
 })
 
 /**
- * Regression: a workspace whose base directory is a remote mirror used to grow
- * a folder row labelled with the mirror's leaf segment (`wmvl31c7ilkuc`) and
- * then hide all of the workspace's own sessions behind it, so one cloud
- * project looked like a project nested inside itself.
+ * A project renders as ONE row: its own directory and every extra folder share
+ * that workspace's session list, so a cloud project never reads as a project
+ * nested inside itself and its mirror id never surfaces as a folder name.
  */
-describe('folder rows never include the base directory', () => {
+describe('a project renders as one row', () => {
   const MIRROR = 'C:/Users/zcol/.dsh/remote-workspaces/wmvl31c7ilkuc'
   const LOCAL = 'C:/Users/zcol/云端记忆系统'
 
   function sessionIn(id: string, cwd: string): SessionSummary {
     return { ...session(id, `会话-${id}`), cwd } as unknown as SessionSummary
-  }
-
-  function state(byId: Record<string, SessionSummary>): SessionListState {
-    return {
-      ids: Object.keys(byId),
-      byId,
-      current: undefined,
-      phase: 'ready',
-      subagentsByParent: {},
-    } as unknown as SessionListState
   }
 
   const workspaces = [
@@ -248,34 +237,31 @@ describe('folder rows never include the base directory', () => {
   const folders: FoldersDocument = {
     version: 1,
     workspaces: {
-      'ws-o': {
-        folders: [],
-        members: [{ path: LOCAL, workspaceId: 'ws-m', kind: 'local' }],
-      },
+      'ws-o': { folders: [], members: [{ path: LOCAL, workspaceId: 'ws-m', kind: 'local' }] },
     },
   }
-  const list = state({
-    's-cloud': sessionIn('s-cloud', `${MIRROR}/src`),
-    's-local': sessionIn('s-local', `${LOCAL}/docs`),
-  })
+  const list = {
+    ids: ['s-cloud', 's-local'],
+    byId: {
+      's-cloud': sessionIn('s-cloud', `${MIRROR}/src`),
+      's-local': sessionIn('s-local', `${LOCAL}/docs`),
+    },
+    current: undefined,
+    phase: 'ready',
+    subagentsByParent: {},
+  } as unknown as SessionListState
   const noManual: ManualGroups = { categories: [], assignments: {} }
-  // Sessions only materialize on an expanded row, so the owner starts open.
   const view = { expandedCategories: [], expandedWorkspaces: ['ws-o'] }
 
-  it('renders only the extra folder and keeps base sessions on the workspace row', () => {
+  it('merges owner and member sessions and emits no folder rows', () => {
     const groups = deriveGroups(list, workspaces, [], CONFIG, view, noManual, new Map(), folders)
     const node = groups.flatMap(group => group.workspaces).find(w => w.workspaceId === 'ws-o')
     expect(node).toBeDefined()
-    expect(node!.folders?.map(f => f.path)).toEqual([LOCAL])
-    expect(node!.folders?.every(f => f.isBase === false)).toBe(true)
-    // The mirror id must never leak into a folder label.
-    expect(node!.folders?.map(f => f.label) ?? []).not.toContain('wmvl31c7ilkuc')
-    // Base-owned sessions stay on the workspace itself.
-    expect(node!.sessions.map(s => s.id)).toEqual(['s-cloud'])
-    expect(node!.folders?.[0]?.sessions.map(s => s.id)).toEqual(['s-local'])
+    expect(node!.folders).toBeUndefined()
+    expect(node!.sessions.map(s => s.id)).toEqual(['s-cloud', 's-local'])
   })
 
-  it('keeps the pre-folders node shape when the workspace has no extras', () => {
+  it('keeps the pre-folders node shape without extras', () => {
     const groups = deriveGroups(list, workspaces, [], CONFIG, view, noManual, new Map(), {
       version: 1,
       workspaces: {},

@@ -21,11 +21,7 @@ import { categoryAppearance, effectiveCategories, orderedWorkspaceIds, resolveCa
 import {
   absorbedWorkspaceIds,
   EMPTY_FOLDERS_DOCUMENT,
-  effectiveFolders,
   entryFor,
-  folderOfCwd,
-  rootOf,
-  samePath,
   type FoldersDocument,
   type WorkspaceFolderEntry,
 } from '../core/folders.ts'
@@ -314,14 +310,16 @@ function projectHoldsSession(
   return members.some(member => member.sessionIds.includes(sessionId))
 }
 
+
 /**
- * Display label of one folder: the last path segment. A drive root (`C:\`) or
- * the POSIX root has no segment, so the whole path is the honest label.
+ * Display label of one folder: the last path segment. A drive root or the
+ * POSIX root has no segment, so the whole path is the honest label.
  * @param path - absolute folder path.
- */export function folderLabel(path: string): string {
-  const trimmed = path.replace(/[/\\]+$/u, '')
+ */
+export function folderLabel(path: string): string {
+  const trimmed = path.replace(/[/\u005C]+$/u, '')
   if (trimmed === '' || /^[A-Za-z]:$/u.test(trimmed)) return path
-  const base = trimmed.split(/[/\\]/u).pop()
+  const base = trimmed.split(/[/\u005C]/u).pop()
   return base !== undefined && base !== '' ? base : path
 }
 
@@ -331,86 +329,22 @@ export function folderKey(workspaceId: WorkspaceId, path: string): string {
 }
 
 /**
- * Display labels for member folders.
- *
- * A cloud member's directory is a locally generated mirror id (`wabc123`), which
- * says nothing to the user: its REMOTE path or title is the honest label. Local
- * members keep the last path segment, like every other folder.
- * @param folders - per-workspace folders + members.
- */
-function memberFolderLabels(entry: WorkspaceFolderEntry | undefined): Map<string, string> {
-  const labels = new Map<string, string>()
-  for (const member of entry?.members ?? []) {
-    const label = member.kind === 'remote'
-      ? (member.title ?? folderLabel(member.remotePath ?? member.path))
-      : folderLabel(member.path)
-    if (label !== '') labels.set(member.path, label)
-  }
-  return labels
-}
-
-/**
- * Split a workspace's visible sessions between its base directory and its extra
- * folders. Sessions keep the order they already had inside their owner, and a
- * workspace with no extra folder returns its sessions untouched — the pre-
- * folders node shape (no `folders` key at all).
- * @param workspaceId - owning workspace.
- * @param workspacePath - canonical directory (folder #0).
- * @param sessions - every visible session of the workspace, in host order.
- * @param list - sessions list snapshot (records each session's cwd).
- * @param entry - saved extra folders + root for this workspace.
- * @param collapsedFolders - collapsed folder-row keys. Undefined means "nothing
- * is collapsed", which is both the default view and what search uses so every
- * hit is visible without another click.
+ * A workspace's extra folders are extra DIRECTORIES of the same project, not
+ * extra session lists: every visible session of the workspace and of its member
+ * workspaces renders on the one workspace row. Folder rows were removed on
+ * request — a project reads as one row, and a cloud workspace's mirror id
+ * (`wmvl31c7ilkuc`) never surfaces as a folder name.
+ * @param sessions - every visible session of the workspace + its members.
  */
 function applyFolders(
-  workspaceId: WorkspaceId,
-  workspacePath: string,
+  _workspaceId: WorkspaceId,
+  _workspacePath: string,
   sessions: readonly SessionNode[],
-  list: SessionListState,
-  entry: WorkspaceFolderEntry | undefined,
-  collapsedFolders: ReadonlySet<string> | undefined,
+  _list: SessionListState,
+  _entry: WorkspaceFolderEntry | undefined,
+  _collapsedFolders: ReadonlySet<string> | undefined,
 ): { sessions: readonly SessionNode[]; folders?: readonly FolderNode[] } {
-  const labels = memberFolderLabels(entry)
-  const extras = effectiveFolders(workspacePath, entry).slice(1)
-  if (extras.length === 0) return { sessions }
-  const root = rootOf(workspacePath, entry)
-  const base: SessionNode[] = []
-  const byFolder = new Map<string, SessionNode[]>()
-  for (const node of sessions) {
-    const owner = folderOfCwd(list.byId[node.id]?.cwd, workspacePath, entry)
-    if (samePath(owner, workspacePath)) {
-      base.push(node)
-      continue
-    }
-    const bucket = byFolder.get(owner)
-    if (bucket === undefined) byFolder.set(owner, [node])
-    else bucket.push(node)
-  }
-  const folderNode = (path: string): FolderNode => {
-    return {
-      path,
-      label: labels.get(path) ?? folderLabel(path),
-      isRoot: samePath(path, root),
-      expanded: collapsedFolders === undefined || !collapsedFolders.has(folderKey(workspaceId, path)),
-      // The base directory is the workspace row itself, so every row here is an
-      // extra folder: a mirror id must never be dressed up as one, and none of
-      // them can be removed from the workspace.
-      isBase: false,
-      // Every owned session is kept on the node so the row's count stays honest
-      // while the folder is collapsed; the RowGroup does the hiding.
-      sessions: byFolder.get(path) ?? [],
-    }
-  }
-  const folders: FolderNode[] = extras.map(path => folderNode(path))
-  // Root first, then stored order: moving the root row to the front keeps the
-  // remaining rows in their stored order.
-  const rootIndex = folders.findIndex(folder => folder.isRoot)
-  if (rootIndex > 0) {
-    const [rootFolder] = folders.splice(rootIndex, 1)
-    if (rootFolder !== undefined) folders.unshift(rootFolder)
-  }
-  return { sessions: base, folders }
+  return { sessions }
 }
 
 /**

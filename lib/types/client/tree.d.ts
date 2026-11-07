@@ -133,10 +133,11 @@ export interface MemberWorkspaces {
  */
 export declare function memberWorkspaces(workspaces: readonly WorkspaceView[], folders?: FoldersDocument): MemberWorkspaces;
 /**
- * Display label of one folder: the last path segment. A drive root (`C:\`) or
- * the POSIX root has no segment, so the whole path is the honest label.
+ * Display label of one folder: the last path segment. A drive root or the
+ * POSIX root has no segment, so the whole path is the honest label.
  * @param path - absolute folder path.
- */ export declare function folderLabel(path: string): string;
+ */
+export declare function folderLabel(path: string): string;
 /** Stable identity of one folder row (same path may live under two workspaces). */
 export declare function folderKey(workspaceId: WorkspaceId, path: string): string;
 /**
