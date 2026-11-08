@@ -274,6 +274,15 @@
   align-items:center;
   transition:transform .12s;
   display:inline-flex;
+  /* The slot owns exactly ONE glyph. Clip it so nothing that lands here from
+     another layer (an overlay, a duplicated svg) can paint a second shape on top
+     of the triangle — that stray shape reads as a broken, mushy icon. */
+  overflow:hidden;
+}
+
+/* Keep only the first svg in the slot; a second one is never part of a row. */
+.wgChevron > svg:not(:first-child) {
+  display:none;
 }
 
 .wgChevronOpen {
