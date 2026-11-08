@@ -286,6 +286,17 @@
   justify-content:center;
   align-items:center;
   display:inline-flex;
+  /* Fixed 16px slot: without an explicit box the glyph was free to be squashed
+     by the row's flex track, which turned the project folder into a grey blob. */
+  width:16px;
+  height:16px;
+}
+
+.wgCategoryIcon > svg {
+  display:block;
+  width:16px;
+  height:16px;
+  flex:none;
 }
 
 .wgCategoryLabel {

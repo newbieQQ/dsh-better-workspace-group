@@ -63,7 +63,7 @@ import {
   IconPinOutlineRegular,
   IconPlanOutlineMedium,
   IconPlusOutlineRegular,
-  IconProjectAddOutlineRegular,
+  IconProjectAddOutlineMedium,
   IconRightUpOutlineRegular,
   IconShieldOutlineMedium,
   IconSkillOutlineMedium,
@@ -430,8 +430,10 @@ export function WorkspaceRow({ node, t, onToggle, onNewSession, onRename, onDele
       </span>
       <span className="wgCategoryIcon" data-wg-row-icon="project">
         {/* Project rows use the project glyph (same as the official workspace
-            browser) so groups (folder glyph) and projects stay distinguishable. */}
-        <IconProjectAddOutlineRegular />
+            browser) so groups (folder glyph) and projects stay distinguishable.
+            Medium stroke like every other row glyph: the thin Regular artwork
+            turns into a grey blob once the sidebar shrinks it. */}
+        <IconProjectAddOutlineMedium size={16} />
       </span>
       <span className="wgProjectLabel" title={node.path}>{node.label}</span>
       {/* Same trailing-slot contract as groups and folders: the count and the
